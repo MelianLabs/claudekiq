@@ -591,7 +591,113 @@ Running `cq init` (or re-running it on an existing project) will:
 
 ---
 
-## 12. Interpolation Engine
+## 12. MCP Server Mode
+
+`cq` can run as a Claude Code MCP (Model Context Protocol) plugin, exposing all commands as native tools that Claude discovers automatically. This works alongside the existing skill-based integration — both modes coexist.
+
+### Architecture
+
+```
+Claude Code ←→ stdio ←→ cq mcp (long-running process)
+                         ├─ initialize → returns server info + capabilities
+                         ├─ tools/list → returns all cq commands as MCP tools
+                         └─ tools/call → dispatches to cmd_* functions, returns JSON
+```
+
+### Protocol
+
+MCP uses JSON-RPC 2.0 over stdio. The server reads newline-delimited JSON messages from stdin and writes responses to stdout. Stderr is used for logging.
+
+Supported methods:
+- `initialize` — handshake, returns server info and capabilities
+- `tools/list` — returns all cq commands as MCP tools with JSON Schema `inputSchema`
+- `tools/call` — executes a cq command, returns structured JSON output
+- `notifications/*` — acknowledged silently (no response)
+
+### Tool Discovery
+
+Tools are generated dynamically from `cq schema`. Each command becomes an MCP tool with:
+- Name prefixed with `cq_` and hyphens converted to underscores (e.g., `step-done` → `cq_step_done`)
+- Description from the schema
+- `inputSchema` as JSON Schema derived from parameter definitions
+
+### Exposed Tools
+
+| MCP Tool | cq Command | Description |
+|----------|------------|-------------|
+| `cq_start` | `cq start` | Start a workflow run |
+| `cq_status` | `cq status` | Show run status |
+| `cq_list` | `cq list` | List all runs |
+| `cq_log` | `cq log` | Show event log |
+| `cq_pause` | `cq pause` | Pause a workflow |
+| `cq_resume` | `cq resume` | Resume a workflow |
+| `cq_cancel` | `cq cancel` | Cancel a workflow |
+| `cq_retry` | `cq retry` | Retry a failed/blocked workflow |
+| `cq_step_done` | `cq step-done` | Mark a step complete |
+| `cq_skip` | `cq skip` | Skip a step |
+| `cq_todos` | `cq todos` | List pending TODOs |
+| `cq_todo` | `cq todo` | Resolve a TODO |
+| `cq_ctx` | `cq ctx` | Show/get/set context |
+| `cq_add_step` | `cq add-step` | Add a step dynamically |
+| `cq_add_steps` | `cq add-steps` | Insert subflow steps |
+| `cq_set_next` | `cq set-next` | Force next step routing |
+| `cq_workflows` | `cq workflows` | Manage templates |
+| `cq_heartbeat` | `cq heartbeat` | Write heartbeat |
+| `cq_check_stale` | `cq check-stale` | Detect stale runs |
+| `cq_cleanup` | `cq cleanup` | Remove expired runs |
+| `cq_workers` | `cq workers` | Worker orchestration |
+
+### Setup
+
+**Option A: Register globally**
+
+```bash
+claude mcp add --transport stdio cq -- cq mcp
+```
+
+**Option B: Per-project `.mcp.json`**
+
+`cq init` creates a `.mcp.json` in the project root:
+
+```json
+{
+  "mcpServers": {
+    "cq": {
+      "type": "stdio",
+      "command": "cq",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Claude Code auto-discovers this file and registers the server.
+
+### Dual-Mode Design
+
+Skills and MCP serve different purposes and work together:
+
+| Capability | Skill mode (`/cq`) | MCP mode (plugin) |
+|-----------|--------------------|--------------------|
+| Installation | `cq init` → installs SKILL.md | `claude mcp add` or `.mcp.json` |
+| Discovery | User invokes `/cq` | Claude sees tools automatically |
+| Runner loop | Skill drives the loop | Claude calls tools directly |
+| Gate handling | Skill asks user, calls `cq todo` | Claude calls `cq_todos` + `cq_todo` |
+| JSON output | Skill parses `--json` CLI output | MCP returns structured JSON natively |
+
+**Skills teach Claude HOW to orchestrate** (the runner loop logic). **MCP gives Claude the TOOLS to do it.** Best experience is both together.
+
+### Implementation
+
+The MCP server is in `lib/mcp.sh` (~280 lines). Key functions:
+- `cq_mcp_serve()` — main loop: read stdin, dispatch, write stdout
+- `_mcp_build_tools()` — converts `cq schema` to MCP tool definitions
+- `_mcp_dispatch_tool()` — maps tool name + JSON args to `cmd_*` function calls
+- All tool calls internally set `CQ_JSON=true` for structured output
+
+---
+
+## 13. Interpolation Engine
 
 All `{{variable}}` references in targets, args_template, routing conditions, and notification hooks are resolved from the run's `ctx.json`.
 
@@ -618,7 +724,7 @@ Conditions support: `==`, `!=`, `contains`, `empty`, `not_empty`. Evaluated top-
 
 ---
 
-## 13. Cross-platform Notes
+## 14. Cross-platform Notes
 
 | Concern | Linux | macOS |
 |---------|-------|-------|
@@ -632,7 +738,7 @@ The script should detect the platform once at startup and set helper functions a
 
 ---
 
-## 14. Migration Path from Proof-of-Concept
+## 15. Migration Path from Proof-of-Concept
 
 The `code_idea/` directory contains the Redis-based Ruby proof-of-concept. Migration plan:
 
@@ -648,7 +754,7 @@ The PoC's test suite (`code_idea/scripts/specs/myflow-cli.rb`) serves as a funct
 
 ---
 
-## 15. Example: Tool Integration Patterns
+## 16. Example: Tool Integration Patterns
 
 Since claudekiq is tool-agnostic, integrations happen through `bash` steps and context variables.
 

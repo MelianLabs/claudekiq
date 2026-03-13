@@ -6,7 +6,7 @@ A filesystem-backed workflow engine for Claude Code. Think Sidekiq, but for orch
 
 Claudekiq (`cq`) lets you define multi-step workflows as YAML that coordinate Claude Code agents, shell commands, and human approvals. Workflows run with persistent filesystem state, automatic retries, priority queuing, and human-in-the-loop gates when decisions can't be automated.
 
-It ships with a Claude Code skill (`/cq`) that acts as the workflow runner — reading state, executing steps, handling gates, and driving workflows to completion automatically.
+It ships with a Claude Code skill (`/cq`) that acts as the workflow runner — reading state, executing steps, handling gates, and driving workflows to completion automatically. It also works as an MCP plugin, exposing all commands as native Claude Code tools.
 
 ## Requirements
 
@@ -62,6 +62,7 @@ This creates:
 - `.claudekiq/` — project directory (workflows, settings, runs)
 - `.claudekiq/workflows/` — where you put workflow YAML files
 - `.claude/skills/cq/SKILL.md` — the Claude Code runner skill
+- `.mcp.json` — MCP plugin config for Claude Code
 
 It also adds run data to `.gitignore` so workflow state doesn't pollute your repo.
 
@@ -391,6 +392,21 @@ Meanwhile, `/cq status` tracked progress from another session:
 
 All commands support `--json` for machine-readable output.
 
+### Heartbeat & Stale Detection
+
+| Command | Description |
+|---------|-------------|
+| `cq heartbeat <run_id>` | Write a heartbeat timestamp for a running workflow |
+| `cq check-stale [--timeout=N] [--mark]` | Detect runs with stale heartbeats |
+
+The `/cq` skill automatically writes heartbeats before and after each step. If a runner crashes, `cq check-stale --mark` sets the run to `blocked` status, and `cq retry` recovers it.
+
+### MCP Server
+
+| Command | Description |
+|---------|-------------|
+| `cq mcp` | Start MCP stdio server (exposes all commands as Claude Code plugin tools) |
+
 ### Headless Mode
 
 For CI/CD pipelines, use `--headless` to auto-approve all gates and output JSON only:
@@ -398,6 +414,46 @@ For CI/CD pipelines, use `--headless` to auto-approve all gates and output JSON 
 ```bash
 cq --headless start deploy --environment=staging
 ```
+
+## MCP Plugin Mode
+
+`cq` can run as a Claude Code MCP plugin, exposing all commands as native tools that Claude discovers automatically. This works alongside the existing skill-based integration.
+
+### Setup
+
+Register `cq` as an MCP server:
+
+```bash
+claude mcp add --transport stdio cq -- cq mcp
+```
+
+Or use the per-project `.mcp.json` (created automatically by `cq init`):
+
+```json
+{
+  "mcpServers": {
+    "cq": {
+      "type": "stdio",
+      "command": "cq",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Once registered, Claude Code discovers `cq` tools automatically — no skill invocation needed. Tools are named `cq_start`, `cq_status`, `cq_step_done`, etc.
+
+### Skill vs MCP
+
+Both modes coexist. Use whichever fits your workflow:
+
+| | Skill (`/cq`) | MCP (plugin) |
+|-|---------------|--------------|
+| **How** | User invokes `/cq` | Claude sees tools automatically |
+| **Runner loop** | Skill drives the orchestration | Claude calls tools directly |
+| **Best for** | Full workflow execution | Ad-hoc commands, custom orchestration |
+
+Best experience is both together — the skill provides the orchestration logic, MCP provides raw tool access.
 
 ## Configuration
 
@@ -439,6 +495,7 @@ Project settings override global. You can set:
   workers/                 # Worker session coordination (gitignored)
   plugins/                 # Custom step type handlers
 
+.mcp.json                  # MCP plugin config (committed)
 .claude/skills/cq/         # Claude Code runner skill (committed)
   SKILL.md                 # Skill definition
 .claude/skills/cq-workers/ # Parallel workers skill (committed)
@@ -540,7 +597,7 @@ Workers: 3 spawned, 2 running, 1 gated, 0 done
 ## Running Tests
 
 ```bash
-bats tests/                              # All tests (135 tests)
+bats tests/                              # All tests (170 tests)
 bats tests/test_e2e.bats                 # End-to-end tests
 bats tests/test_start.bats --filter "pattern"  # Filter by name
 ```

@@ -7,7 +7,7 @@ cmd_schema() {
   if [[ -z "$command" ]]; then
     # List all commands
     cat <<'JSON'
-["start","status","list","log","pause","resume","cancel","retry","step-done","skip","todos","todo","ctx","add-step","add-steps","set-next","workflows","config","init","version","help","schema","cleanup","heartbeat","check-stale"]
+["start","status","list","log","pause","resume","cancel","retry","step-done","skip","todos","todo","ctx","add-step","add-steps","set-next","workflows","config","init","version","help","schema","cleanup","heartbeat","check-stale","mcp","workers"]
 JSON
     return
   fi
@@ -375,6 +375,17 @@ JSON
   ],
   "flags": ["--json", "--mark"],
   "examples": ["cq check-stale", "cq check-stale --timeout=60 --mark --json"]
+}
+JSON
+      ;;
+    mcp)
+      cat <<'JSON'
+{
+  "command": "mcp",
+  "description": "Start MCP (Model Context Protocol) stdio server — exposes all cq commands as Claude Code plugin tools",
+  "usage": "cq mcp",
+  "parameters": [],
+  "examples": ["cq mcp", "claude mcp add --transport stdio cq -- cq mcp"]
 }
 JSON
       ;;

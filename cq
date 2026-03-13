@@ -127,6 +127,9 @@ case "$COMMAND" in
   # Workers (parallel orchestration)
   workers)        cmd_workers "$@" ;;
 
+  # MCP server mode
+  mcp)            _source_lib "mcp.sh"; cq_mcp_serve ;;
+
   *)
     echo "cq: unknown command '${COMMAND}'. Run 'cq help' for usage." >&2
     exit 1

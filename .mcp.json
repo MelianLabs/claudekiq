@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cq": {
+      "type": "stdio",
+      "command": "cq",
+      "args": ["mcp"]
+    }
+  }
+}

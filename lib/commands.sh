@@ -19,6 +19,9 @@ cmd_init() {
       grep -qF '.claudekiq/workers/' "$gitignore" || echo '.claudekiq/workers/' >> "$gitignore"
     fi
 
+    # Install MCP config (added in v2.1.0)
+    _install_mcp_config "$project_dir"
+
     cq_info "Already initialized in ${project_dir}"
     if [[ "$CQ_JSON" == "true" ]]; then
       jq -cn --arg dir "$project_dir" '{status:"exists", directory:$dir}'
@@ -52,6 +55,9 @@ cmd_init() {
   # Install Claude Code skills (/cq and /cq-workers)
   _install_skill "$project_dir"
   _install_workers_skill "$project_dir"
+
+  # Install MCP config
+  _install_mcp_config "$project_dir"
 
   cq_info "Initialized .claudekiq/ in ${project_dir}"
   if [[ "$CQ_JSON" == "true" ]]; then
@@ -473,6 +479,34 @@ Results:
 - Workers communicate ONLY through status/answer files — no direct messaging
 - If a worker agent finishes (background notification), re-read status to update dashboard
 WORKERS_SKILL_EOF
+}
+
+_install_mcp_config() {
+  local project_dir="$1"
+  local mcp_file="${project_dir}/.mcp.json"
+
+  if [[ -f "$mcp_file" ]]; then
+    # Check if cq entry already exists
+    if jq -e '.mcpServers.cq' "$mcp_file" >/dev/null 2>&1; then
+      return
+    fi
+    # Add cq entry to existing config
+    local tmp
+    tmp=$(jq '.mcpServers.cq = {"type":"stdio","command":"cq","args":["mcp"]}' "$mcp_file")
+    echo "$tmp" > "$mcp_file"
+  else
+    cat > "$mcp_file" <<'MCP_EOF'
+{
+  "mcpServers": {
+    "cq": {
+      "type": "stdio",
+      "command": "cq",
+      "args": ["mcp"]
+    }
+  }
+}
+MCP_EOF
+  fi
 }
 
 cmd_version() {

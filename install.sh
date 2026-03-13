@@ -31,7 +31,7 @@ else
   # Remote install (curl pipe or no local files)
   echo "Downloading from ${REPO_URL}..."
   curl -fsSL "${REPO_URL}/cq" -o "${CQ_HOME}/bin/cq"
-  for lib in core.sh yaml.sh storage.sh commands.sh schema.sh; do
+  for lib in core.sh yaml.sh storage.sh commands.sh schema.sh mcp.sh; do
     curl -fsSL "${REPO_URL}/lib/${lib}" -o "${CQ_HOME}/lib/${lib}"
   done
   mkdir -p "${CQ_HOME}/skills/cq"
