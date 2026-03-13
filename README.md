@@ -1,122 +1,462 @@
 # claudekiq
 
-A workflow engine for automating development processes with Claude Code. Think Sidekiq, but for orchestrating AI agents, skills, and human decisions across your development lifecycle.
+A filesystem-backed workflow engine for Claude Code. Think Sidekiq, but for orchestrating AI agents, shell commands, and human decisions across your development lifecycle.
 
 ## What It Does
 
-Claudekiq lets you define multi-step workflows (as YAML) that coordinate Claude Code agents, shell commands, and human approvals. Workflows run with persistent filesystem state, automatic retries, priority queuing, and human-in-the-loop gates when decisions can't be automated.
+Claudekiq (`cq`) lets you define multi-step workflows as YAML that coordinate Claude Code agents, shell commands, and human approvals. Workflows run with persistent filesystem state, automatic retries, priority queuing, and human-in-the-loop gates when decisions can't be automated.
 
-## Use Cases
+It ships with a Claude Code skill (`/cq`) that acts as the workflow runner — reading state, executing steps, handling gates, and driving workflows to completion automatically.
 
-- **Feature development**: Story intake → RFC → branch → implement → test → lint → code review → PR → deploy
-- **Bug fixes**: Triage → investigate → branch → fix → test → review → PR → deploy
-- **DevOps automation**: Infrastructure changes with approval gates and rollback steps
-- **CI/CD orchestration**: Run workflows on integration servers via headless mode
-- **Cross-project consistency**: Same workflow engine across web, mobile, and infrastructure projects
+## Requirements
 
-## Quick Start
+- **Bash** (4.0+)
+- **[jq](https://jqlang.github.io/jq/download/)** — JSON processor
+- **[yq](https://github.com/mikefarah/yq#install)** — YAML processor
+- **[bats](https://github.com/bats-core/bats-core)** — for running tests (optional)
+
+## Installation
 
 ```bash
-# Install
+curl -fsSL https://raw.githubusercontent.com/MelianLabs/claudekiq/main/install.sh | bash
+```
+
+This installs `cq` to `~/.cq/bin/`. Add it to your PATH:
+
+```bash
+# bash
+echo 'export PATH="$HOME/.cq/bin:$PATH"' >> ~/.bashrc
+
+# zsh
+echo 'export PATH="$HOME/.cq/bin:$PATH"' >> ~/.zshrc
+
+# fish
+fish_add_path ~/.cq/bin
+```
+
+### From Source
+
+```bash
+git clone https://github.com/MelianLabs/claudekiq.git
+cd claudekiq
 bash install.sh
+```
 
-# Initialize in your project
+### Verify
+
+```bash
+cq version
+# cq 1.0.0
+```
+
+## Getting Started
+
+### 1. Initialize in your project
+
+```bash
+cd your-project
 cq init
+```
 
-# Create a workflow (.claudekiq/workflows/my-flow.yml)
-# Start it
-cq start my-flow --story_id=123 --stack=rails
+This creates:
+- `.claudekiq/` — project directory (workflows, settings, runs)
+- `.claudekiq/workflows/` — where you put workflow YAML files
+- `.claude/skills/cq/SKILL.md` — the Claude Code runner skill
+
+It also adds run data to `.gitignore` so workflow state doesn't pollute your repo.
+
+### 2. Create a workflow
+
+Create `.claudekiq/workflows/deploy.yml`:
+
+```yaml
+name: deploy
+description: Build, test, and deploy the app
+
+defaults:
+  environment: staging
+
+steps:
+  - id: build
+    name: Build
+    type: bash
+    target: "npm run build"
+    gate: auto
+
+  - id: test
+    name: Run Tests
+    type: bash
+    target: "npm test"
+    gate: review
+    max_visits: 3
+    on_pass: deploy
+    on_fail: fix-tests
+
+  - id: fix-tests
+    name: Fix Failing Tests
+    type: agent
+    target: "@dev"
+    args_template: "Fix the failing tests. Run npm test to see what's broken."
+    gate: auto
+    next: test
+
+  - id: deploy
+    name: Deploy to Environment
+    type: bash
+    target: "npm run deploy -- --env={{environment}}"
+    gate: human
+    next: end
+```
+
+### 3. Run it
+
+There are two ways to run workflows:
+
+#### Option A: Using the `/cq` skill (recommended)
+
+In Claude Code, type `/cq` to get an interactive workflow picker, or start one directly:
+
+```
+/cq deploy
+/cq deploy --environment=production
+```
+
+The skill handles everything — executing steps, handling gates, asking for approvals, and driving the workflow to completion.
+
+#### Option B: Using the CLI directly
+
+```bash
+# Start
+cq start deploy --environment=production
 
 # Check status
-cq status
+cq status <run_id>
 
-# Step through the workflow
+# Mark steps done
 cq step-done <run_id> <step_id> pass
 
-# Handle human approvals
+# Handle approvals
 cq todos
 cq todo 1 approve
 ```
 
-## Workflow Example
+## How It Works
+
+### Workflow Anatomy
+
+A workflow is a YAML file with **steps**. Each step has:
+
+| Field | Description |
+|-------|-------------|
+| `id` | Unique identifier |
+| `type` | How to execute: `bash`, `agent`, `skill`, `manual`, `subflow` |
+| `target` | What to execute (command, agent role, skill name) |
+| `args_template` | Arguments with `{{variable}}` interpolation |
+| `gate` | What happens after: `auto`, `human`, `review` |
+
+### Step Types
+
+- **`bash`** — Run a shell command. Pass on exit 0, fail otherwise.
+- **`agent`** — AI task. The `args_template` becomes the prompt; Claude does the work.
+- **`skill`** — Invoke a Claude Code skill (e.g., `/commit`, `/review`).
+- **`manual`** — Human action. Displays instructions and waits for approval.
+- **`subflow`** — Insert steps from another workflow inline.
+
+### Gates
+
+Gates control what happens after a step completes:
+
+- **`auto`** — Advance immediately to the next step.
+- **`human`** — Pause and create a TODO. Wait for human approval before continuing.
+- **`review`** — On pass, advance automatically. On fail, retry (up to `max_visits`) then escalate to human.
+
+### Routing
+
+Steps can define explicit routing:
 
 ```yaml
-name: feature
-description: Feature development workflow
+- id: test
+  type: bash
+  target: "npm test"
+  gate: review
+  max_visits: 5
+  on_pass: deploy        # Go here on success
+  on_fail: fix-tests     # Go here on failure
+```
 
-defaults:
-  stack: rails
+You can also use conditional routing:
+
+```yaml
+on_pass:
+  - when: "{{environment}} == production"
+    goto: staging-first
+  - default: deploy
+```
+
+Without explicit routing, steps execute in order.
+
+### Context & Interpolation
+
+Workflows have a context object (key-value pairs). Use `{{variable}}` in targets and args to interpolate values:
+
+```yaml
+target: "git checkout -b feature/{{branch_name}} main"
+args_template: "Implement: {{description}} using the {{stack}} framework"
+```
+
+Context is populated from:
+- Workflow `defaults`
+- `--key=val` arguments passed to `cq start`
+- Step `outputs` extracted from results
+- Manual updates via `cq ctx set <run_id> key value`
+
+## The `/cq` Skill
+
+When you run `cq init`, it installs a Claude Code skill at `.claude/skills/cq/SKILL.md`. This skill has three modes:
+
+### `/cq` — Interactive picker
+
+Lists available workflows and any active runs. Lets you choose what to start or resume.
+
+### `/cq <workflow>` — Direct start
+
+Starts a workflow immediately. Asks for required parameters if not provided:
+
+```
+/cq feature --description="add export command" --branch_name=add-export
+```
+
+### `/cq status` — Jobs dashboard
+
+Shows a live dashboard of all running, gated, queued, and recently completed jobs:
+
+```
+📋 Claudekiq Jobs Dashboard
+═══════════════════════════
+
+🔄 Running (1)
+  └─ [9b16d0f2] release — Step: bump-version 🔄
+
+⏸️ Gated (1)
+  └─ [abc12345] feature — Step: implement ⏸️ (awaiting approval)
+
+✅ Recently Completed
+  └─ [e62f4aa3] release — completed
+
+📝 Pending TODOs (1)
+  └─ #1 [abc12345] feature/implement — review implementation
+```
+
+Supports auto-refresh (polls every minute) so you can monitor workflows running in other Claude Code sessions.
+
+## Real-World Example: Releasing cq v1.0.0
+
+We used cq to release itself. Here's the release workflow:
+
+```yaml
+name: release
+description: Cut a new cq release
+default_priority: urgent
 
 steps:
-  - id: implement
-    name: Implement Changes
-    type: agent
-    target: "@{{stack}}-dev"
-    args_template: "Implement: {{story_title}}"
-    gate: human
-
-  - id: run-tests
-    name: Run Tests
+  - id: check-tests
+    name: Run Full Test Suite
     type: bash
-    target: "{{test_command}}"
-    gate: review
-    max_visits: 5
-    on_pass: code-review
-    on_fail: implement
+    target: "bats tests/"
+    gate: auto
 
-  - id: code-review
-    name: Code Review
-    type: manual
-    description: "Review changes for {{story_title}}"
+  - id: shellcheck
+    name: Run ShellCheck
+    type: bash
+    target: "shellcheck cq lib/*.sh || true"
+    gate: human
+
+  - id: bump-version
+    name: Bump Version
+    type: agent
+    target: "@cq-dev"
+    args_template: "Bump CQ_VERSION in cq from current to {{new_version}}."
+    gate: human
+
+  - id: verify
+    name: Verify Version
+    type: bash
+    target: "./cq version"
+    gate: auto
+
+  - id: final-tests
+    name: Final Test Run
+    type: bash
+    target: "bats tests/"
+    gate: auto
+
+  - id: commit-tag
+    name: Commit and Tag
+    type: bash
+    target: "git add -A && git commit -m 'Release v{{new_version}}' && git tag v{{new_version}}"
+    gate: human
+
+  - id: push
+    name: Push Release
+    type: bash
+    target: "git push origin main --tags"
     gate: human
 ```
 
-## Commands
+Running it:
 
 ```
-Workflow lifecycle:    start, status, list, log
-Flow control:         pause, resume, cancel, retry
-Step control:         step-done, skip
-Human actions:        todos, todo
-Context:              ctx, ctx get, ctx set
-Dynamic modification: add-step, add-steps, set-next
-Templates:            workflows list|show|validate
-Configuration:        config, config get, config set
-Setup:                init, version, help, schema
-Maintenance:          cleanup
+/cq release
 ```
+
+The skill asked for `new_version`, ran the test suite, executed ShellCheck (paused for human review), had Claude bump the version, verified it, ran tests again, then paused for approval before committing, tagging, and pushing. Each `human` gate gave us a chance to review before proceeding.
+
+Meanwhile, `/cq status` tracked progress from another session:
+
+```
+🔄 Running (1)
+  └─ [9b16d0f2] release — Step: final-tests 🔄
+```
+
+## CLI Reference
+
+### Workflow Lifecycle
+
+| Command | Description |
+|---------|-------------|
+| `cq start <workflow> [--key=val...]` | Start a workflow run |
+| `cq status [run_id]` | Show run status (or all runs) |
+| `cq list` | List all runs |
+| `cq log <run_id>` | Show event log for a run |
+
+### Flow Control
+
+| Command | Description |
+|---------|-------------|
+| `cq pause <run_id>` | Pause a running workflow |
+| `cq resume <run_id>` | Resume a paused workflow |
+| `cq cancel <run_id>` | Cancel a workflow |
+| `cq retry <run_id>` | Retry a failed workflow |
+
+### Step Control
+
+| Command | Description |
+|---------|-------------|
+| `cq step-done <run_id> <step_id> pass\|fail [result]` | Mark a step complete |
+| `cq skip <run_id>` | Skip the current step |
+
+### Human Actions
+
+| Command | Description |
+|---------|-------------|
+| `cq todos` | List pending TODOs across all runs |
+| `cq todo <number> approve\|reject\|override\|dismiss` | Resolve a TODO |
+
+### Context
+
+| Command | Description |
+|---------|-------------|
+| `cq ctx <run_id>` | Show context for a run |
+| `cq ctx get <run_id> <key>` | Get a context value |
+| `cq ctx set <run_id> <key> <value>` | Set a context value |
+
+### Dynamic Modification
+
+| Command | Description |
+|---------|-------------|
+| `cq add-step <run_id> --id=X --type=bash --target="cmd"` | Add a step to a running workflow |
+| `cq add-steps <run_id> --flow <workflow> --after <step_id>` | Insert steps from another workflow |
+| `cq set-next <run_id> <step_id>` | Jump to a specific step |
+
+### Templates
+
+| Command | Description |
+|---------|-------------|
+| `cq workflows list` | List available workflows |
+| `cq workflows show <name>` | Show workflow definition |
+| `cq workflows validate <name>` | Validate workflow YAML |
+
+### Setup & Configuration
+
+| Command | Description |
+|---------|-------------|
+| `cq init` | Initialize cq in a project |
+| `cq config` | Show resolved configuration |
+| `cq config get <key>` | Get a config value |
+| `cq config set <key> <value>` | Set a project config value |
+| `cq schema [command]` | Show command schemas (for AI agents) |
+| `cq cleanup [--max-age=N]` | Remove old run data |
+| `cq version` | Show version |
+| `cq help` | Show help |
 
 All commands support `--json` for machine-readable output.
 
-## Design Goals
+### Headless Mode
 
-- **Project agnostic**: Works with any language, framework, or stack
-- **Tool agnostic**: No lock-in to any project management tool — use with GitHub Issues, JIRA, Linear, or anything with a CLI
-- **Configurable per project**: Global config (`~/.cq/config.json`) with per-project overrides (`.claudekiq/settings.json`)
-- **Cross-platform**: macOS and Linux
-- **AI-discoverable**: Built-in `cq schema` command so Claude Code agents can discover and invoke commands programmatically
-- **Minimal dependencies**: Bash + `jq` + `yq`. Filesystem-only storage — no database required
-- **Simple installation**: Single script to install globally, `cq init` to configure per project
+For CI/CD pipelines, use `--headless` to auto-approve all gates and output JSON only:
+
+```bash
+cq --headless start deploy --environment=staging
+```
+
+## Configuration
+
+### Global config (`~/.cq/config.json`)
+
+```json
+{
+  "prefix": "cq",
+  "ttl": 2592000,
+  "default_priority": "normal",
+  "concurrency": 1
+}
+```
+
+### Project config (`.claudekiq/settings.json`)
+
+Project settings override global. You can set:
+
+- `concurrency` — max simultaneous runs (default: 1)
+- `default_priority` — for new runs (urgent, high, normal, low)
+- `ttl` — seconds before old runs are cleaned up
+- `min_cq_version` — warn if installed cq is too old
+- `notifications` — hook commands for events (on_gate, on_fail, on_complete, on_start)
 
 ## Project Structure
 
 ```
-cq                         # CLI entry point
-lib/
-  core.sh                  # Utilities (config, interpolation, locking, hooks)
-  storage.sh               # Filesystem I/O (runs, steps, state, context)
-  commands.sh              # Command implementations
-  schema.sh                # AI-discoverable command schemas
-  yaml.sh                  # YAML parsing
-install.sh                 # Installer
-tests/                     # BATS test suite (111 tests)
+~/.cq/                     # Global installation
+  bin/cq                   # CLI binary
+  lib/*.sh                 # Library files
+  config.json              # Global config
+  workflows/               # Shared workflows
 
 .claudekiq/                # Per-project (created by cq init)
-  settings.json            # Project config
+  settings.json            # Project config overrides
   workflows/               # Workflow definitions (committed)
     private/               # Private workflows (gitignored)
   runs/                    # Run state (gitignored)
   plugins/                 # Custom step type handlers
+
+.claude/skills/cq/         # Claude Code runner skill (committed)
+  SKILL.md                 # Skill definition
+```
+
+## Design Principles
+
+- **Project agnostic** — works with any language, framework, or stack
+- **Tool agnostic** — no lock-in to any project management tool
+- **Filesystem-only** — no database, no external services, just files
+- **AI-discoverable** — `cq schema` exposes command metadata for agents
+- **Human-in-the-loop** — gates ensure humans stay in control of critical decisions
+- **Minimal dependencies** — Bash + jq + yq
+
+## Running Tests
+
+```bash
+bats tests/                              # All tests (114 tests)
+bats tests/test_e2e.bats                 # End-to-end tests
+bats tests/test_start.bats --filter "pattern"  # Filter by name
 ```
 
 ## Inspiration

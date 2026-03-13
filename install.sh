@@ -3,7 +3,7 @@
 set -euo pipefail
 
 CQ_HOME="${HOME}/.cq"
-REPO_URL="${CQ_REPO_URL:-https://raw.githubusercontent.com/claudekiq/claudekiq/main}"
+REPO_URL="${CQ_REPO_URL:-https://raw.githubusercontent.com/MelianLabs/claudekiq/main}"
 
 echo "Installing cq..."
 
@@ -12,23 +12,30 @@ mkdir -p "${CQ_HOME}/bin"
 mkdir -p "${CQ_HOME}/lib"
 mkdir -p "${CQ_HOME}/workflows"
 
-# Download or copy files
-if [[ -d "$(dirname "$0")/lib" ]]; then
+# Detect if running from a local repo checkout (not piped from curl)
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+if [[ -n "$SCRIPT_DIR" && -d "${SCRIPT_DIR}/lib" ]]; then
   # Local install (from repo checkout)
-  cp "$(dirname "$0")/cq" "${CQ_HOME}/bin/cq"
-  cp "$(dirname "$0")"/lib/*.sh "${CQ_HOME}/lib/"
-  if [[ -d "$(dirname "$0")/skills" ]]; then
+  echo "Installing from local checkout..."
+  cp "${SCRIPT_DIR}/cq" "${CQ_HOME}/bin/cq"
+  cp "${SCRIPT_DIR}"/lib/*.sh "${CQ_HOME}/lib/"
+  if [[ -d "${SCRIPT_DIR}/skills" ]]; then
     mkdir -p "${CQ_HOME}/skills"
-    cp -r "$(dirname "$0")"/skills/* "${CQ_HOME}/skills/"
+    cp -r "${SCRIPT_DIR}"/skills/* "${CQ_HOME}/skills/"
   fi
 else
-  # Remote install
-  curl -sSL "${REPO_URL}/cq" -o "${CQ_HOME}/bin/cq"
+  # Remote install (curl pipe or no local files)
+  echo "Downloading from ${REPO_URL}..."
+  curl -fsSL "${REPO_URL}/cq" -o "${CQ_HOME}/bin/cq"
   for lib in core.sh yaml.sh storage.sh commands.sh schema.sh; do
-    curl -sSL "${REPO_URL}/lib/${lib}" -o "${CQ_HOME}/lib/${lib}"
+    curl -fsSL "${REPO_URL}/lib/${lib}" -o "${CQ_HOME}/lib/${lib}"
   done
   mkdir -p "${CQ_HOME}/skills/cq"
-  curl -sSL "${REPO_URL}/skills/cq/SKILL.md" -o "${CQ_HOME}/skills/cq/SKILL.md"
+  curl -fsSL "${REPO_URL}/skills/cq/SKILL.md" -o "${CQ_HOME}/skills/cq/SKILL.md"
 fi
 
 chmod +x "${CQ_HOME}/bin/cq"
