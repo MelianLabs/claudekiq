@@ -29,17 +29,21 @@ cmd_init() {
   local gitignore="${project_dir}/.gitignore"
   local needs_private=true
   local needs_runs=true
+  local needs_workers=true
   if [[ -f "$gitignore" ]]; then
     grep -qF '.claudekiq/workflows/private/' "$gitignore" && needs_private=false
     grep -qF '.claudekiq/runs/' "$gitignore" && needs_runs=false
+    grep -qF '.claudekiq/workers/' "$gitignore" && needs_workers=false
   fi
   {
     $needs_private && echo '.claudekiq/workflows/private/'
     $needs_runs && echo '.claudekiq/runs/'
+    $needs_workers && echo '.claudekiq/workers/'
   } >> "$gitignore"
 
-  # Install Claude Code skill (/cq)
+  # Install Claude Code skills (/cq and /cq-workers)
   _install_skill "$project_dir"
+  _install_workers_skill "$project_dir"
 
   cq_info "Initialized .claudekiq/ in ${project_dir}"
   if [[ "$CQ_JSON" == "true" ]]; then
@@ -273,6 +277,190 @@ Go back to **Step 1**.
 - If the user wants to cancel, run: `cq cancel <run_id>`
 - If the user wants to skip a step, run: `cq skip <run_id>`
 SKILL_EOF
+}
+
+_install_workers_skill() {
+  local project_dir="$1"
+  local skill_dir="${project_dir}/.claude/skills/cq-workers"
+  mkdir -p "$skill_dir"
+
+  # Try to copy from the cq installation directory first
+  local src="${CQ_SCRIPT_DIR}/skills/cq-workers/SKILL.md"
+  if [[ -f "$src" ]]; then
+    cp "$src" "${skill_dir}/SKILL.md"
+    return
+  fi
+
+  # Otherwise embed the skill inline (abbreviated — full version in skills/cq-workers/SKILL.md)
+  cat > "${skill_dir}/SKILL.md" <<'WORKERS_SKILL_EOF'
+---
+name: cq-workers
+description: "Parallel workflow orchestration — spawn multiple Claude workers to process jobs concurrently. Use /cq-workers <workflow> --jobs='[...]' to start."
+---
+
+# Claudekiq Workers — Parallel Orchestration
+
+You are the foreman for `cq-workers`, a parallel workflow orchestrator. Your job is to spawn multiple Claude worker agents, each in its own git worktree, each running a cq workflow to process a job. You monitor their progress and handle gate escalation.
+
+## Invocation
+
+Parse the arguments:
+
+- **`/cq-workers <workflow> --jobs='[...]'`**: Start workers for a JSON job list
+- **`/cq-workers <workflow> --jobs-from=<file>`**: Read jobs from a JSON file
+- **`/cq-workers <workflow> --jobs='[...]' --headless`**: Fully autonomous (auto-approve all gates)
+- **`/cq-workers status <session_id>`**: Monitor an existing session
+
+Each job in the JSON array must have at least `id` and `description`. Additional fields become context variables for the workflow.
+
+## Start Workers
+
+1. Parse the `--jobs` JSON array (or read from `--jobs-from` file)
+2. Generate a session_id: run `cq workers init --json` and extract the session_id
+3. Determine mode: interactive (default) or headless (if `--headless` flag)
+4. For EACH job, spawn a background Agent with worktree isolation:
+
+```
+Agent tool call:
+  description: "Worker: <job_id>"
+  isolation: "worktree"
+  run_in_background: true
+  prompt: <child agent prompt below>
+```
+
+5. After spawning all workers, enter the **Monitoring Loop**
+
+### Child Agent Prompt
+
+For each job, construct this prompt (interpolating values):
+
+```
+You are a cq worker agent processing job "JOB_ID: DESCRIPTION".
+
+## Environment
+- PARENT_ROOT=<absolute path to main worktree>
+- SESSION_ID=<session_id>
+- JOB_ID=<job_id>
+- MODE=<interactive|headless>
+
+## Setup
+1. Run: cq init
+2. Start the workflow:
+   cq start <workflow> --json <all job fields as --key=val flags>
+3. Extract run_id from the JSON output
+
+## Runner Loop
+Execute each step of the cq workflow:
+
+1. Read state: cq status <run_id> --json
+2. If completed/failed/cancelled: write final status and stop
+3. Find current step, interpolate variables, execute it:
+   - bash: run the command
+   - agent: do the work described in args_template
+   - manual: mark as pass (headless) or write gate info (interactive)
+4. Mark done: cq step-done <run_id> <step_id> pass|fail
+5. Update status file after each step:
+   Write to: $PARENT_ROOT/.claudekiq/workers/$SESSION_ID/$JOB_ID.status.json
+   Content: {"status":"running","run_id":"<run_id>","step":"<step_id>","step_name":"<name>","total_steps":<N>,"completed_steps":<N>}
+
+## Gate Handling (interactive mode only)
+If cq status shows "gated" after step-done:
+1. Read TODO: cq todos --json
+2. Write gate info to status file:
+   {"status":"gated","run_id":"<run_id>","gate":{"step":"<step>","step_name":"<name>","action":"<action>","description":"<desc>"}}
+3. Poll for answer file every 5 seconds (timeout 30 min):
+   while [ ! -f "$PARENT_ROOT/.claudekiq/workers/$SESSION_ID/$JOB_ID.answer.json" ]; do sleep 5; done
+4. Read the answer file and apply it:
+   - If action is "approve": cq todo 1 approve
+   - If action is "reject": cq todo 1 reject
+   - If data contains context: run cq ctx set <run_id> <key> <value> for each, then approve
+5. Remove the answer file: rm "$PARENT_ROOT/.claudekiq/workers/$SESSION_ID/$JOB_ID.answer.json"
+6. Continue the runner loop
+
+## Gate Handling (headless mode)
+If gated: auto-approve all TODOs with cq todo 1 approve and continue.
+
+## Completion
+When workflow finishes (completed or failed):
+1. Write final status:
+   {"status":"completed|failed","run_id":"<run_id>","summary":"<brief summary>","branch":"<current git branch>"}
+2. If changes were made, commit them: git add -A && git commit -m "<message>"
+
+## Rules
+- Stay in your worktree. Only write outside it to the status file path above.
+- Create a branch for your work: git checkout -b <workflow>/<job_id>
+- Do not interact with the user — you are a background agent.
+- If a bash command fails and the gate is auto, continue (cq handles routing).
+```
+
+## Monitoring Loop
+
+After spawning all workers, loop until all jobs reach a terminal state:
+
+### Step 1: Read Status
+```bash
+cq workers status <session_id> --json
+```
+
+### Step 2: Display Dashboard
+```
+🏭 Claudekiq Workers — Session <session_id>
+════════════════════════════════════════
+
+🔄 Running (N)
+  ├─ [JOB-1] description — Step M/T: step_name 🔄
+  └─ [JOB-2] description — Step M/T: step_name 🔄
+
+⏸️ Gated (N)
+  └─ [JOB-3] description — Step: step_name ⏸️ (action needed)
+
+✅ Completed (N)
+  └─ [JOB-4] description — done (branch: bugfix/JOB-4)
+
+❌ Failed (N)
+  └─ [JOB-5] description — failed at step_name
+
+Workers: X spawned, Y running, Z gated, W done
+```
+
+### Step 3: Handle Gated Workers
+For each worker with status "gated":
+1. Show the gate details to the user (step name, description, what action is needed)
+2. Ask the user: approve, reject, or provide data
+3. Write the answer:
+   ```bash
+   cq workers answer <session_id> <job_id> approve
+   # or with data:
+   cq workers answer <session_id> <job_id> approve '{"key":"value"}'
+   ```
+4. The child worker will pick up the answer and continue
+
+### Step 4: Check Completion
+- If ALL workers are completed/failed: show final summary and stop
+- Otherwise: wait 10 seconds and go back to Step 1
+
+## Final Summary
+When all workers finish, show:
+```
+🏭 Workers Complete — Session <session_id>
+═══════════════════════════════════════
+
+✅ Completed: N jobs
+❌ Failed: N jobs
+
+Results:
+  ✅ [JOB-1] description — branch: bugfix/JOB-1
+  ✅ [JOB-2] description — branch: bugfix/JOB-2
+  ❌ [JOB-3] description — failed at step: run-tests
+```
+
+## Important Rules
+- Always use `--json` flag when reading cq state
+- Each worker runs in its own git worktree — no conflicts between workers
+- The shared coordination directory is at $CQ_PROJECT_ROOT/.claudekiq/workers/<session_id>/
+- Workers communicate ONLY through status/answer files — no direct messaging
+- If a worker agent finishes (background notification), re-read status to update dashboard
+WORKERS_SKILL_EOF
 }
 
 cmd_version() {
@@ -1663,5 +1851,190 @@ cmd_cleanup() {
     jq -cn --argjson n "$removed" '{removed:$n}'
   else
     echo "Removed ${removed} expired run(s)."
+  fi
+}
+
+# ============================================================
+# Workers commands (parallel orchestration)
+# ============================================================
+
+cmd_workers() {
+  local subcmd="${1:-}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    init)
+      _workers_init "$@"
+      ;;
+    status)
+      _workers_status "$@"
+      ;;
+    answer)
+      _workers_answer "$@"
+      ;;
+    cleanup)
+      _workers_cleanup "$@"
+      ;;
+    ""|help)
+      cq_info "Usage: cq workers <init|status|answer|cleanup>"
+      cq_info ""
+      cq_info "Subcommands:"
+      cq_info "  init                    Create a new worker session"
+      cq_info "  status <session_id>     Show status of all workers in a session"
+      cq_info "  answer <sid> <jid> <action> [data]  Answer a gated worker"
+      cq_info "  cleanup [--max-age=N]   Remove old worker sessions"
+      ;;
+    *)
+      cq_die "Unknown workers subcommand: ${subcmd}"
+      ;;
+  esac
+}
+
+_workers_init() {
+  local session_id
+  session_id=$(cq_gen_id)
+  local workers_dir="${CQ_PROJECT_ROOT}/.claudekiq/workers/${session_id}"
+  mkdir -p "$workers_dir"
+
+  local ts
+  ts=$(cq_now)
+
+  jq -cn \
+    --arg sid "$session_id" \
+    --arg ts "$ts" \
+    --arg root "$CQ_PROJECT_ROOT" \
+    '{session_id:$sid, created_at:$ts, parent_root:$root}' \
+    > "${workers_dir}/manifest.json"
+
+  if [[ "$CQ_JSON" == "true" ]]; then
+    jq -cn --arg sid "$session_id" --arg dir "$workers_dir" \
+      '{session_id:$sid, directory:$dir}'
+  else
+    echo "Worker session ${session_id} created."
+  fi
+}
+
+_workers_status() {
+  local session_id="${1:?Usage: cq workers status <session_id>}"
+  local workers_dir="${CQ_PROJECT_ROOT}/.claudekiq/workers/${session_id}"
+
+  if [[ ! -d "$workers_dir" ]]; then
+    cq_die "Worker session '${session_id}' not found"
+  fi
+
+  local jobs_json="[]"
+  local status_file
+  for status_file in "${workers_dir}"/*.status.json; do
+    [[ -f "$status_file" ]] || continue
+    local job_data
+    job_data=$(cat "$status_file")
+    local job_id
+    job_id=$(basename "$status_file" .status.json)
+    job_data=$(echo "$job_data" | jq --arg jid "$job_id" '. + {job_id:$jid}')
+    jobs_json=$(echo "$jobs_json" | jq --argjson j "$job_data" '. + [$j]')
+  done
+
+  # Aggregate counts
+  local running gated completed failed
+  running=$(echo "$jobs_json" | jq '[.[] | select(.status=="running")] | length')
+  gated=$(echo "$jobs_json" | jq '[.[] | select(.status=="gated")] | length')
+  completed=$(echo "$jobs_json" | jq '[.[] | select(.status=="completed")] | length')
+  failed=$(echo "$jobs_json" | jq '[.[] | select(.status=="failed")] | length')
+  local total
+  total=$(echo "$jobs_json" | jq 'length')
+
+  if [[ "$CQ_JSON" == "true" ]]; then
+    jq -cn \
+      --arg sid "$session_id" \
+      --argjson jobs "$jobs_json" \
+      --argjson running "$running" \
+      --argjson gated "$gated" \
+      --argjson completed "$completed" \
+      --argjson failed "$failed" \
+      --argjson total "$total" \
+      '{session_id:$sid, total:$total, running:$running, gated:$gated, completed:$completed, failed:$failed, jobs:$jobs}'
+  else
+    echo "Session: ${session_id} — ${total} workers (${running} running, ${gated} gated, ${completed} completed, ${failed} failed)"
+    echo "$jobs_json" | jq -r '.[] | "  [\(.job_id)] \(.status) — step: \(.step // "n/a")"'
+  fi
+}
+
+_workers_answer() {
+  local session_id="${1:?Usage: cq workers answer <session_id> <job_id> <action> [data_json]}"
+  local job_id="${2:?Usage: cq workers answer <session_id> <job_id> <action> [data_json]}"
+  local action="${3:?Usage: cq workers answer <session_id> <job_id> <action> [data_json]}"
+  local data_json="${4:-"{}"}"
+
+  local workers_dir="${CQ_PROJECT_ROOT}/.claudekiq/workers/${session_id}"
+  if [[ ! -d "$workers_dir" ]]; then
+    cq_die "Worker session '${session_id}' not found"
+  fi
+
+  local ts
+  ts=$(cq_now)
+
+  # Build the answer JSON — try data as JSON object, fall back to string wrapper
+  local answer_json
+  answer_json=$(jq -cn \
+    --arg action "$action" \
+    --argjson data "$data_json" \
+    --arg ts "$ts" \
+    '{action:$action, data:$data, answered_at:$ts}' 2>/dev/null) || \
+  answer_json=$(jq -cn \
+    --arg action "$action" \
+    --arg rawdata "$data_json" \
+    --arg ts "$ts" \
+    '{action:$action, data:{message:$rawdata}, answered_at:$ts}')
+
+  echo "$answer_json" > "${workers_dir}/${job_id}.answer.json"
+
+  if [[ "$CQ_JSON" == "true" ]]; then
+    jq -cn --arg sid "$session_id" --arg jid "$job_id" --arg action "$action" \
+      '{session_id:$sid, job_id:$jid, action:$action}'
+  else
+    echo "Answer sent to worker ${job_id}: ${action}"
+  fi
+}
+
+_workers_cleanup() {
+  local max_age=2592000  # 30 days default
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --max-age=*) max_age="${1#*=}" ;;
+      *) ;;
+    esac
+    shift
+  done
+
+  local workers_base="${CQ_PROJECT_ROOT}/.claudekiq/workers"
+  if [[ ! -d "$workers_base" ]]; then
+    if [[ "$CQ_JSON" == "true" ]]; then
+      jq -cn '{removed:0}'
+    else
+      echo "No worker sessions found."
+    fi
+    return 0
+  fi
+
+  local removed=0
+  local session_dir
+  for session_dir in "${workers_base}"/*/; do
+    [[ -d "$session_dir" ]] || continue
+    local manifest="${session_dir}manifest.json"
+    [[ -f "$manifest" ]] || continue
+
+    local age
+    age=$(cq_file_age "$manifest")
+    if [[ "$age" -ge "$max_age" ]]; then
+      rm -rf "$session_dir"
+      removed=$((removed + 1))
+    fi
+  done
+
+  if [[ "$CQ_JSON" == "true" ]]; then
+    jq -cn --argjson n "$removed" '{removed:$n}'
+  else
+    echo "Removed ${removed} expired worker session(s)."
   fi
 }

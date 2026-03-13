@@ -436,10 +436,96 @@ Project settings override global. You can set:
   workflows/               # Workflow definitions (committed)
     private/               # Private workflows (gitignored)
   runs/                    # Run state (gitignored)
+  workers/                 # Worker session coordination (gitignored)
   plugins/                 # Custom step type handlers
 
 .claude/skills/cq/         # Claude Code runner skill (committed)
   SKILL.md                 # Skill definition
+.claude/skills/cq-workers/ # Parallel workers skill (committed)
+  SKILL.md                 # Skill definition
+```
+
+## Parallel Workers (`/cq-workers`)
+
+The `/cq-workers` skill spawns multiple Claude instances to process jobs concurrently — each in its own git worktree, each running a `cq` workflow independently.
+
+### Usage
+
+```
+/cq-workers bugfix --jobs='[
+  {"id":"BUG-101","description":"login fails on Safari"},
+  {"id":"BUG-102","description":"crash on CSV export"},
+  {"id":"BUG-103","description":"timeout on large queries"}
+]'
+```
+
+Or load jobs from a file:
+
+```
+/cq-workers bugfix --jobs-from=bugs.json
+```
+
+### How It Works
+
+1. The parent (your main Claude instance) creates a **worker session** via `cq workers init`
+2. For each job, it spawns a **background Agent** with `isolation: "worktree"` — giving each worker its own git worktree
+3. Each worker runs `cq init` + `cq start <workflow>` and executes the full workflow independently
+4. Workers write status updates to a shared coordination directory: `.claudekiq/workers/<session_id>/`
+5. The parent monitors all workers via `cq workers status <session_id>`
+
+### Gate Escalation
+
+When a child worker hits a **human gate** (needs approval):
+- The worker writes gate details to its status file and polls for an answer
+- The parent detects the gate, shows you the details, and asks for your decision
+- You approve/reject, the parent writes an answer file via `cq workers answer`
+- The child picks up the answer and continues
+
+### Headless Mode
+
+Add `--headless` for fully autonomous execution (auto-approves all gates):
+
+```
+/cq-workers bugfix --jobs='[...]' --headless
+```
+
+### Dashboard
+
+While workers are running, the parent shows a live dashboard:
+
+```
+🏭 Claudekiq Workers — Session abc12345
+════════════════════════════════════════
+
+🔄 Running (2)
+  ├─ [BUG-101] login fails on Safari — Step: fix 🔄
+  └─ [BUG-103] timeout on large queries — Step: investigate 🔄
+
+⏸️ Gated (1)
+  └─ [BUG-102] crash on CSV export — Step: fix ⏸️ (needs review)
+
+✅ Completed (0)
+
+Workers: 3 spawned, 2 running, 1 gated, 0 done
+```
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `cq workers init` | Create a new worker session |
+| `cq workers status <session_id>` | Show status of all workers in a session |
+| `cq workers answer <sid> <job_id> <action> [data]` | Send answer to a gated worker |
+| `cq workers cleanup [--max-age=N]` | Remove old worker sessions |
+
+### Coordination Directory
+
+```
+.claudekiq/workers/                    # Gitignored
+  <session_id>/
+    manifest.json                      # Session metadata
+    <job_id>.status.json               # Written by child (status updates)
+    <job_id>.answer.json               # Written by parent (gate responses)
 ```
 
 ## Design Principles
@@ -454,7 +540,7 @@ Project settings override global. You can set:
 ## Running Tests
 
 ```bash
-bats tests/                              # All tests (114 tests)
+bats tests/                              # All tests (135 tests)
 bats tests/test_e2e.bats                 # End-to-end tests
 bats tests/test_start.bats --filter "pattern"  # Filter by name
 ```

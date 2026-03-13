@@ -349,6 +349,59 @@ JSON
 }
 JSON
       ;;
+    workers)
+      cat <<'JSON'
+{
+  "command": "workers",
+  "description": "Parallel worker orchestration — manage worker sessions for concurrent workflow execution",
+  "usage": "cq workers <init|status|answer|cleanup>",
+  "subcommands": [
+    {
+      "name": "init",
+      "description": "Create a new worker session",
+      "usage": "cq workers init",
+      "parameters": [],
+      "flags": ["--json"]
+    },
+    {
+      "name": "status",
+      "description": "Show status of all workers in a session",
+      "usage": "cq workers status <session_id>",
+      "parameters": [
+        {"name": "session_id", "type": "string", "required": true, "description": "Worker session ID"}
+      ],
+      "flags": ["--json"]
+    },
+    {
+      "name": "answer",
+      "description": "Send an answer to a gated worker",
+      "usage": "cq workers answer <session_id> <job_id> <action> [data_json]",
+      "parameters": [
+        {"name": "session_id", "type": "string", "required": true, "description": "Worker session ID"},
+        {"name": "job_id", "type": "string", "required": true, "description": "Job ID of the gated worker"},
+        {"name": "action", "type": "string", "required": true, "description": "Action: approve or reject"},
+        {"name": "data_json", "type": "json", "required": false, "description": "Optional JSON data to pass to the worker context"}
+      ],
+      "flags": ["--json"]
+    },
+    {
+      "name": "cleanup",
+      "description": "Remove old worker sessions",
+      "usage": "cq workers cleanup [--max-age=N]",
+      "parameters": [],
+      "flags": ["--max-age=N", "--json"]
+    }
+  ],
+  "examples": [
+    "cq workers init --json",
+    "cq workers status abc12345 --json",
+    "cq workers answer abc12345 BUG-1 approve",
+    "cq workers answer abc12345 BUG-1 approve '{\"key\":\"value\"}'",
+    "cq workers cleanup --max-age=86400"
+  ]
+}
+JSON
+      ;;
     *)
       cq_die "Unknown command: ${command}"
       ;;
