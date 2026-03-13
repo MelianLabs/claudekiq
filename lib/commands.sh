@@ -63,7 +63,7 @@ _install_skill() {
   cat > "${skill_dir}/SKILL.md" <<'SKILL_EOF'
 ---
 name: cq
-description: "Claudekiq workflow runner — orchestrates multi-step development workflows. Use /cq to list and run workflows, or /cq <workflow> to start a specific one."
+description: "Claudekiq workflow runner — orchestrates multi-step development workflows. Use /cq to list and run workflows, /cq <workflow> to start a specific one, or /cq status to monitor all jobs."
 ---
 
 # Claudekiq Workflow Runner
@@ -75,6 +75,7 @@ You are the runner for `cq` (claudekiq), a filesystem-backed workflow engine. Yo
 Parse the arguments passed to this skill:
 
 - **No arguments (`/cq`)**: Interactive mode — list workflows and let the user pick one
+- **Status dashboard (`/cq status`)**: Show all running and pending jobs with auto-refresh
 - **With workflow name (`/cq feature`)**: Start that workflow directly
 - **With workflow + params (`/cq feature --description="add export" --branch_name=export`)**: Start with those context variables
 
@@ -89,6 +90,56 @@ Parse the arguments passed to this skill:
 4. If starting new: present the workflow list with descriptions
 5. Ask which workflow to run
 6. Proceed to **Start Workflow**
+
+## Status Dashboard (`/cq status`)
+
+This mode shows a live dashboard of all running, pending, and gated jobs with auto-refresh.
+
+### How it works
+
+1. Run: `cq list --json` to get all active runs
+2. Run: `cq todos --json` to get all pending TODOs across runs
+3. Display a formatted dashboard:
+
+```
+📋 Claudekiq Jobs Dashboard
+═══════════════════════════
+
+🔄 Running (2)
+  ├─ [abc12345] feature "add export command" — Step 3/6: run-tests 🔄
+  └─ [def67890] bugfix "fix login" — Step 1/4: create-branch 🔄
+
+⏸️ Gated (1)
+  └─ [ghi11111] release "v2.0.0" — Step 5/7: push-to-origin ⏸️ (awaiting approval)
+
+📋 Queued (1)
+  └─ [jkl22222] feature "add import" — pending (waiting for concurrency slot)
+
+✅ Recently Completed (last 24h)
+  └─ [mno33333] release "v1.0.0" — completed 2h ago
+
+📝 Pending TODOs (1)
+  └─ #1 [ghi11111] release/push-to-origin — approve push to origin/main
+```
+
+4. For each run, show:
+   - Run ID (short)
+   - Workflow name
+   - Description from context (if available)
+   - Current step and position (e.g., "Step 3/6")
+   - Status marker
+   - For gated runs: what TODO is pending
+5. After displaying, ask the user:
+   - **"Auto-refresh every 10s? (y/n)"** — if yes, use the `/loop` skill: `/loop 10s /cq status`
+   - **"Resume a run?"** — if yes, get the run_id and jump to the **Runner Loop**
+   - **"Resolve a TODO?"** — if yes, show TODO details and handle approve/reject
+
+### Auto-refresh
+
+When the user wants auto-refresh, invoke the `/loop` skill with a 10-second interval:
+- Skill: `loop`, Args: `10s /cq status`
+- This will re-run `/cq status` every 10 seconds until the user stops it
+- The user can stop it at any time by pressing the interrupt key
 
 ## Start Workflow
 
