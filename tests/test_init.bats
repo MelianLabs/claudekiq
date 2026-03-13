@@ -22,6 +22,28 @@ teardown() {
   [ -f .claudekiq/settings.json ]
 }
 
+@test "init creates Claude Code skill" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  [ -f .claude/skills/cq/SKILL.md ]
+}
+
+@test "init skill has correct frontmatter" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  grep -q '^name: cq' .claude/skills/cq/SKILL.md
+}
+
+@test "init re-run updates skill" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  # Corrupt the skill
+  echo "old" > .claude/skills/cq/SKILL.md
+  "$CQ" init >/dev/null
+  # Should be restored
+  grep -q 'Claudekiq Workflow Runner' .claude/skills/cq/SKILL.md
+}
+
 @test "init creates .gitignore entries" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null

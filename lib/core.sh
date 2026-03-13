@@ -238,7 +238,8 @@ cq_valid_priority() {
 cq_version_gte() {
   local v1="$1" v2="$2"
   local IFS='.'
-  local -a a=($v1) b=($v2)
+  read -ra a <<< "$v1"
+  read -ra b <<< "$v2"
   local i
   for i in 0 1 2; do
     local av="${a[$i]:-0}" bv="${b[$i]:-0}"

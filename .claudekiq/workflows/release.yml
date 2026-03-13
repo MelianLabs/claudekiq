@@ -1,0 +1,48 @@
+name: release
+description: Cut a new cq release
+default_priority: urgent
+
+steps:
+  - id: check-tests
+    name: Run Full Test Suite
+    type: bash
+    target: "bats tests/"
+    gate: auto
+
+  - id: shellcheck
+    name: Run ShellCheck
+    type: bash
+    target: "shellcheck cq lib/*.sh || true"
+    gate: human
+
+  - id: bump-version
+    name: Bump Version
+    type: agent
+    target: "@cq-dev"
+    args_template: "Bump CQ_VERSION in cq from current to {{new_version}}. Only change the version line."
+    gate: human
+
+  - id: verify
+    name: Verify Version
+    type: bash
+    target: "./cq version"
+    gate: auto
+
+  - id: final-tests
+    name: Final Test Run
+    type: bash
+    target: "bats tests/"
+    gate: auto
+
+  - id: commit-tag
+    name: Commit and Tag
+    type: bash
+    target: "git add -A && git commit -m 'Release v{{new_version}}' && git tag v{{new_version}}"
+    gate: human
+
+  - id: push
+    name: Push Release
+    type: bash
+    target: "git push origin main --tags"
+    gate: human
+    next: end

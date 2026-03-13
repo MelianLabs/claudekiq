@@ -4,18 +4,21 @@
 
 set -euo pipefail
 
-CQ_VERSION="0.1.0"
+export CQ_VERSION="1.0.0"
 
 # --- Resolve script location and source libs ---
 
 CQ_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export CQ_SCRIPT_DIR
 
 # Source libs: first try relative to script, then ~/.cq/lib/
 _source_lib() {
   local name="$1"
   if [[ -f "${CQ_SCRIPT_DIR}/lib/${name}" ]]; then
+    # shellcheck source=/dev/null
     source "${CQ_SCRIPT_DIR}/lib/${name}"
   elif [[ -f "${HOME}/.cq/lib/${name}" ]]; then
+    # shellcheck source=/dev/null
     source "${HOME}/.cq/lib/${name}"
   else
     echo "cq: error: Cannot find lib/${name}" >&2

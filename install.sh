@@ -17,12 +17,18 @@ if [[ -d "$(dirname "$0")/lib" ]]; then
   # Local install (from repo checkout)
   cp "$(dirname "$0")/cq" "${CQ_HOME}/bin/cq"
   cp "$(dirname "$0")"/lib/*.sh "${CQ_HOME}/lib/"
+  if [[ -d "$(dirname "$0")/skills" ]]; then
+    mkdir -p "${CQ_HOME}/skills"
+    cp -r "$(dirname "$0")"/skills/* "${CQ_HOME}/skills/"
+  fi
 else
   # Remote install
   curl -sSL "${REPO_URL}/cq" -o "${CQ_HOME}/bin/cq"
   for lib in core.sh yaml.sh storage.sh commands.sh schema.sh; do
     curl -sSL "${REPO_URL}/lib/${lib}" -o "${CQ_HOME}/lib/${lib}"
   done
+  mkdir -p "${CQ_HOME}/skills/cq"
+  curl -sSL "${REPO_URL}/skills/cq/SKILL.md" -o "${CQ_HOME}/skills/cq/SKILL.md"
 fi
 
 chmod +x "${CQ_HOME}/bin/cq"
