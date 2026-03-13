@@ -140,6 +140,19 @@ cq heartbeat <run_id>
 ```
 This lets `cq check-stale` detect if the runner crashes mid-step.
 
+For **long-running steps** (`agent`, `skill`, or `bash` commands that spawn background agents), start a background heartbeat loop **before** executing the step, and kill it **after**:
+```bash
+# Start background heartbeat (every 30s)
+( while true; do cq heartbeat <run_id> 2>/dev/null; sleep 30; done ) &
+CQ_HB_PID=$!
+
+# ... execute the step ...
+
+# Stop background heartbeat
+kill $CQ_HB_PID 2>/dev/null; wait $CQ_HB_PID 2>/dev/null
+```
+This prevents `check-stale` from falsely flagging runs as stale during multi-minute agent/skill executions.
+
 ### Step 6: Execute Step
 
 Based on the step `type`:

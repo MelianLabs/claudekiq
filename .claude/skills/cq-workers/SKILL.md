@@ -65,7 +65,11 @@ Execute each step of the cq workflow:
    - manual: mark as pass (headless) or write gate info (interactive)
 4. Mark done: cq step-done <run_id> <step_id> pass|fail
 5. Write heartbeat: cq heartbeat <run_id>
-6. Update status file after each step:
+6. For long-running steps (agent, skill), start a background heartbeat loop BEFORE execution:
+   ( while true; do cq heartbeat <run_id> 2>/dev/null; sleep 30; done ) & CQ_HB_PID=$!
+   ... execute step ...
+   kill $CQ_HB_PID 2>/dev/null; wait $CQ_HB_PID 2>/dev/null
+7. Update status file after each step:
    Write to: $PARENT_ROOT/.claudekiq/workers/$SESSION_ID/$JOB_ID.status.json
    Content: {"status":"running","run_id":"<run_id>","step":"<step_id>","step_name":"<name>","total_steps":<N>,"completed_steps":<N>}
 
@@ -142,7 +146,8 @@ For each worker with status "gated":
 4. The child worker will pick up the answer and continue
 
 ### Step 4: Check for Stale Workers
-Run `cq check-stale --json` to detect workers whose heartbeat has gone stale.
+Run `cq check-stale --json` to detect workers whose heartbeat has gone stale (default timeout: 600s).
+Workers running agent/skill steps use background heartbeat loops (every 30s), so a stale heartbeat strongly indicates a crashed worker.
 If any are detected:
 - Show them in the dashboard as ⏳ Blocked
 - Ask user: "Worker X appears stuck. Retry or cancel?"
