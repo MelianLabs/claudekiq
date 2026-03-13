@@ -1,0 +1,115 @@
+id: feature
+name: Feature Development
+description: Full lifecycle from LT story to staging deployment
+default_priority: normal
+
+steps:
+  - id: read-story
+    name: Read LT Story
+    type: agent
+    target: "@lt-story"
+    args_template: "Read story {{story_id}}"
+    gate: auto
+    outputs: [story_type, story_title]
+    next:
+      - when: "{{story_type}} == bug"
+        goto: investigate-bug
+      - default: create-rfc
+
+  - id: create-rfc
+    name: Create RFC
+    type: agent
+    target: "@rfc-writer"
+    args_template: "Write RFC for story {{story_id}}: {{story_title}}"
+    gate: human
+    next: create-branch
+
+  - id: investigate-bug
+    name: Deep Bug Investigation
+    type: skill
+    target: "/bug-investigate"
+    args_template: "{{story_id}}"
+    gate: auto
+    outputs: [root_cause, affected_files]
+    next: create-branch
+
+  - id: create-branch
+    name: Create Branch
+    type: agent
+    target: "@lt-branch"
+    args_template: "Create branch for story {{story_id}}"
+    gate: auto
+    outputs: [branch]
+
+  - id: implement
+    name: Implement Changes
+    type: agent
+    target: "@{{stack}}-feature"
+    args_template: "Implement story {{story_id}}: {{story_title}}"
+    gate: human
+
+  - id: run-tests
+    name: Run Tests
+    type: agent
+    target: "@{{stack}}-test"
+    gate: auto
+    max_visits: 5
+    on_pass: run-lint
+    on_fail: fix-code
+
+  - id: fix-code
+    name: Fix Issues
+    type: agent
+    target: "@{{stack}}-feature"
+    args_template: "Fix failing tests/lint issues on {{branch}}"
+    gate: auto
+    next: run-tests
+
+  - id: run-lint
+    name: Run Linting
+    type: agent
+    target: "@{{stack}}-lint"
+    gate: auto
+    max_visits: 5
+    on_pass: code-review
+    on_fail: fix-lint
+
+  - id: fix-lint
+    name: Fix Lint Issues
+    type: agent
+    target: "@{{stack}}-lint"
+    args_template: "--fix"
+    gate: auto
+    next: run-lint
+
+  - id: code-review
+    name: Code Review
+    type: agent
+    target: "@code-review"
+    gate: review
+    max_visits: 3
+    on_pass: create-pr
+    on_fail: implement
+
+  - id: create-pr
+    name: Create PR
+    type: skill
+    target: "/pre-pr"
+    args_template: "{{story_id}}"
+    gate: auto
+    outputs: [pr_number]
+
+  - id: full-review
+    name: Full PR Review
+    type: skill
+    target: "/review"
+    args_template: "{{pr_number}}"
+    gate: human
+
+  - id: staging-deploy
+    name: Deploy to Staging
+    type: skill
+    target: "/staging-deploy"
+    args_template: "{{pr_number}}"
+    gate: human
+    next: end

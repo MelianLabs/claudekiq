@@ -1,0 +1,46 @@
+name: with-routing
+description: Workflow with routing and gates
+
+defaults:
+  mode: feature
+
+steps:
+  - id: read-input
+    name: Read Input
+    type: bash
+    target: "echo read"
+    gate: auto
+    next:
+      - when: "{{mode}} == bug"
+        goto: investigate
+      - when: "{{mode}} == feature"
+        goto: implement
+      - default: implement
+
+  - id: investigate
+    name: Investigate Bug
+    type: bash
+    target: "echo investigate"
+    gate: auto
+    next: implement
+
+  - id: implement
+    name: Implement Changes
+    type: agent
+    target: "@dev"
+    gate: human
+
+  - id: run-tests
+    name: Run Tests
+    type: bash
+    target: "echo tests"
+    gate: review
+    max_visits: 3
+    on_pass: done
+    on_fail: implement
+
+  - id: done
+    name: Done
+    type: bash
+    target: "echo done"
+    gate: auto

@@ -1,0 +1,24 @@
+name: minimal
+description: Minimal 3-step test workflow
+
+defaults:
+  greeting: hello
+
+steps:
+  - id: step-a
+    name: Step A
+    type: bash
+    target: "echo {{greeting}}"
+    gate: auto
+
+  - id: step-b
+    name: Step B
+    type: bash
+    target: "echo step-b"
+    gate: auto
+
+  - id: step-c
+    name: Step C
+    type: bash
+    target: "echo step-c"
+    gate: auto

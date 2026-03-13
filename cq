@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# cq — Claudekiq: filesystem-backed workflow engine CLI for Claude Code
+# https://github.com/claudekiq/claudekiq
+
+set -euo pipefail
+
+CQ_VERSION="0.1.0"
+
+# --- Resolve script location and source libs ---
+
+CQ_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source libs: first try relative to script, then ~/.cq/lib/
+_source_lib() {
+  local name="$1"
+  if [[ -f "${CQ_SCRIPT_DIR}/lib/${name}" ]]; then
+    source "${CQ_SCRIPT_DIR}/lib/${name}"
+  elif [[ -f "${HOME}/.cq/lib/${name}" ]]; then
+    source "${HOME}/.cq/lib/${name}"
+  else
+    echo "cq: error: Cannot find lib/${name}" >&2
+    exit 1
+  fi
+}
+
+_source_lib "core.sh"
+_source_lib "yaml.sh"
+_source_lib "storage.sh"
+_source_lib "commands.sh"
+_source_lib "schema.sh"
+
+# --- Check dependencies ---
+
+command -v jq >/dev/null 2>&1 || { echo "cq: error: jq is required. Install it: https://jqlang.github.io/jq/download/" >&2; exit 1; }
+command -v yq >/dev/null 2>&1 || { echo "cq: error: yq is required. Install it: https://github.com/mikefarah/yq#install" >&2; exit 1; }
+
+# --- Detect platform ---
+
+cq_detect_platform
+
+# --- Parse global flags ---
+
+CQ_JSON="${CQ_JSON:-false}"
+CQ_HEADLESS="${CQ_HEADLESS:-false}"
+CQ_PROJECT_ROOT=""
+
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json)     CQ_JSON="true" ;;
+    --headless) CQ_HEADLESS="true"; CQ_JSON="true" ;;
+    *)          ARGS+=("$1") ;;
+  esac
+  shift
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+# --- Find project root ---
+
+CQ_PROJECT_ROOT=$(cq_find_project_root 2>/dev/null || echo "$PWD")
+
+# Check version compatibility
+if [[ -d "${CQ_PROJECT_ROOT}/.claudekiq" ]]; then
+  cq_check_version
+fi
+
+# --- Command dispatch ---
+
+COMMAND="${1:-help}"
+shift 2>/dev/null || true
+
+case "$COMMAND" in
+  # Setup
+  init)           cmd_init "$@" ;;
+  version)        cmd_version "$@" ;;
+  help)           cmd_help "$@" ;;
+  schema)         cmd_schema "$@" ;;
+
+  # Workflow lifecycle
+  start)          cmd_start "$@" ;;
+  status)         cmd_status "$@" ;;
+  list)           cmd_list "$@" ;;
+  log)            cmd_log "$@" ;;
+
+  # Flow control
+  pause)          cmd_pause "$@" ;;
+  resume)         cmd_resume "$@" ;;
+  cancel)         cmd_cancel "$@" ;;
+  retry)          cmd_retry "$@" ;;
+
+  # Step control
+  step-done)      cmd_step_done "$@" ;;
+  skip)           cmd_skip "$@" ;;
+
+  # Human actions
+  todos)          cmd_todos "$@" ;;
+  todo)           cmd_todo "$@" ;;
+
+  # Context
+  ctx)            cmd_ctx "$@" ;;
+
+  # Dynamic modification
+  add-step)       cmd_add_step "$@" ;;
+  add-steps)      cmd_add_steps "$@" ;;
+  set-next)       cmd_set_next "$@" ;;
+
+  # Template management
+  workflows)      cmd_workflows "$@" ;;
+
+  # Configuration
+  config)         cmd_config "$@" ;;
+
+  # Maintenance
+  cleanup)        cmd_cleanup "$@" ;;
+
+  *)
+    echo "cq: unknown command '${COMMAND}'. Run 'cq help' for usage." >&2
+    exit 1
+    ;;
+esac
