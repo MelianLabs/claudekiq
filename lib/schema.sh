@@ -7,7 +7,7 @@ cmd_schema() {
   if [[ -z "$command" ]]; then
     # List all commands
     cat <<'JSON'
-["start","status","list","log","pause","resume","cancel","retry","step-done","skip","todos","todo","ctx","add-step","add-steps","set-next","workflows","config","init","version","help","schema","cleanup"]
+["start","status","list","log","pause","resume","cancel","retry","step-done","skip","todos","todo","ctx","add-step","add-steps","set-next","workflows","config","init","version","help","schema","cleanup","heartbeat","check-stale"]
 JSON
     return
   fi
@@ -346,6 +346,35 @@ JSON
     {"name": "command", "type": "string", "required": false, "description": "Command name for specific help"}
   ],
   "examples": ["cq help", "cq help start"]
+}
+JSON
+      ;;
+    heartbeat)
+      cat <<'JSON'
+{
+  "command": "heartbeat",
+  "description": "Write a heartbeat timestamp for a running workflow",
+  "usage": "cq heartbeat <run_id>",
+  "parameters": [
+    {"name": "run_id", "type": "string", "required": true, "description": "Run ID"}
+  ],
+  "flags": ["--json"],
+  "examples": ["cq heartbeat a1b2c3d4"]
+}
+JSON
+      ;;
+    check-stale)
+      cat <<'JSON'
+{
+  "command": "check-stale",
+  "description": "Detect running workflows with stale heartbeats",
+  "usage": "cq check-stale [--timeout=N] [--mark]",
+  "parameters": [
+    {"name": "--timeout", "type": "integer", "required": false, "description": "Seconds before a heartbeat is considered stale (default: 120)"},
+    {"name": "--mark", "type": "boolean", "required": false, "description": "Mark stale runs as blocked"}
+  ],
+  "flags": ["--json", "--mark"],
+  "examples": ["cq check-stale", "cq check-stale --timeout=60 --mark --json"]
 }
 JSON
       ;;

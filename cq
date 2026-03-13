@@ -117,6 +117,10 @@ case "$COMMAND" in
   # Configuration
   config)         cmd_config "$@" ;;
 
+  # Heartbeat / stale detection
+  heartbeat)      cmd_heartbeat "$@" ;;
+  check-stale)    cmd_check_stale "$@" ;;
+
   # Maintenance
   cleanup)        cmd_cleanup "$@" ;;
 

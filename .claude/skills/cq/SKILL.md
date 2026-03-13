@@ -108,6 +108,7 @@ If `meta.status` is:
 - `completed` → Report success with a summary of what was done. Stop.
 - `failed` → Report failure, show which step failed and why. Stop.
 - `cancelled` → Report cancellation. Stop.
+- `blocked` → The previous runner crashed. Report the blocked step and ask the user: retry (`cq retry <run_id>`) or cancel.
 
 ### Step 3: Check for Pending TODOs
 If `meta.status` is `gated`:
@@ -131,6 +132,13 @@ Find the step definition in `steps` where `id == meta.current_step`. Extract:
 
 ### Step 5: Interpolate Variables
 Replace all `{{variable}}` references in `target` and `args_template` with values from `ctx`. Use the context JSON to resolve them.
+
+### Step 5.5: Write Heartbeat
+Before executing the step, write a heartbeat to signal the runner is alive:
+```bash
+cq heartbeat <run_id>
+```
+This lets `cq check-stale` detect if the runner crashes mid-step.
 
 ### Step 6: Execute Step
 
@@ -172,6 +180,11 @@ Then mark the current step as pass and continue.
 cq step-done <run_id> <step_id> pass|fail [result_json]
 ```
 If the step produced JSON output (e.g. from a bash command), pass it as `result_json` so outputs can be extracted into context.
+
+After marking the step complete, refresh the heartbeat:
+```bash
+cq heartbeat <run_id>
+```
 
 ### Step 8: Handle Post-Step State
 Re-read status: `cq status <run_id> --json`

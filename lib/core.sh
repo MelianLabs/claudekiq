@@ -133,7 +133,7 @@ cq_default_config() {
     "passed": "✅", "failed": "❌", "running": "🔄",
     "gated": "⏸️", "skipped": "⏭️", "pending": "⬚",
     "queued": "📋", "paused": "⏯️", "cancelled": "🚫",
-    "completed": "✅"
+    "completed": "✅", "blocked": "⏳"
   },
   "step_fields": ["name", "type", "target", "args_template", "gate"],
   "edge_keys": ["next", "on_pass", "on_fail"],

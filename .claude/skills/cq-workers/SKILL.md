@@ -64,7 +64,8 @@ Execute each step of the cq workflow:
    - agent: do the work described in args_template
    - manual: mark as pass (headless) or write gate info (interactive)
 4. Mark done: cq step-done <run_id> <step_id> pass|fail
-5. Update status file after each step:
+5. Write heartbeat: cq heartbeat <run_id>
+6. Update status file after each step:
    Write to: $PARENT_ROOT/.claudekiq/workers/$SESSION_ID/$JOB_ID.status.json
    Content: {"status":"running","run_id":"<run_id>","step":"<step_id>","step_name":"<name>","total_steps":<N>,"completed_steps":<N>}
 
@@ -140,7 +141,15 @@ For each worker with status "gated":
    ```
 4. The child worker will pick up the answer and continue
 
-### Step 4: Check Completion
+### Step 4: Check for Stale Workers
+Run `cq check-stale --json` to detect workers whose heartbeat has gone stale.
+If any are detected:
+- Show them in the dashboard as ⏳ Blocked
+- Ask user: "Worker X appears stuck. Retry or cancel?"
+- If retry: `cq retry <run_id>`
+- If cancel: `cq cancel <run_id>` and update the worker status file to `{"status":"failed",...}`
+
+### Step 5: Check Completion
 - If ALL workers are completed/failed: show final summary and stop
 - Otherwise: wait 10 seconds and go back to Step 1
 
