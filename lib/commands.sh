@@ -66,6 +66,8 @@ _install_skill() {
 
   # Try to copy from the cq installation directory first
   local src="${CQ_SCRIPT_DIR}/skills/cq/SKILL.md"
+  # When installed to ~/.cq/bin/, skills are at ~/.cq/skills/
+  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq/SKILL.md"
   if [[ -f "$src" ]]; then
     cp "$src" "${skill_dir}/SKILL.md"
     return
@@ -294,6 +296,8 @@ _install_workers_skill() {
 
   # Try to copy from the cq installation directory first
   local src="${CQ_SCRIPT_DIR}/skills/cq-workers/SKILL.md"
+  # When installed to ~/.cq/bin/, skills are at ~/.cq/skills/
+  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq-workers/SKILL.md"
   if [[ -f "$src" ]]; then
     cp "$src" "${skill_dir}/SKILL.md"
     return
