@@ -9,8 +9,16 @@ cmd_init() {
   local project_dir="${1:-$PWD}"
 
   if [[ -d "${project_dir}/.claudekiq" ]]; then
-    # Already initialized — still update the skill in case of upgrades
+    # Already initialized — still update skills and gitignore in case of upgrades
     _install_skill "$project_dir"
+    _install_workers_skill "$project_dir"
+
+    # Ensure .gitignore has workers entry (added in v2.0.0)
+    local gitignore="${project_dir}/.gitignore"
+    if [[ -f "$gitignore" ]]; then
+      grep -qF '.claudekiq/workers/' "$gitignore" || echo '.claudekiq/workers/' >> "$gitignore"
+    fi
+
     cq_info "Already initialized in ${project_dir}"
     if [[ "$CQ_JSON" == "true" ]]; then
       jq -cn --arg dir "$project_dir" '{status:"exists", directory:$dir}'
