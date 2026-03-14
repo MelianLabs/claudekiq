@@ -17,6 +17,21 @@ cq_info() {
   echo "$@"
 }
 
+# Output JSON if --json mode is active. Returns 1 (false) when not in JSON mode,
+# allowing: cq_json_out ... || cq_info "text"
+cq_json_out() {
+  [[ "$CQ_JSON" != "true" ]] && return 1
+  jq -cn "$@"
+}
+
+# Trim leading/trailing whitespace using pure Bash (no subprocess)
+cq_trim() {
+  local var="$1"
+  var="${var#"${var%%[![:space:]]*}"}"
+  var="${var%"${var##*[![:space:]]}"}"
+  echo "$var"
+}
+
 # --- ID and time ---
 
 cq_gen_id() {
@@ -44,17 +59,11 @@ cq_epoch() {
 # --- Logging ---
 
 cq_log_event() {
-  local run_dir="$1" event="$2" data="$3"
+  local run_dir="$1" event="$2" data="${3:-"{}"}"
   local ts
   ts=$(cq_now)
-  local log_file="${run_dir}/log.jsonl"
-  if [[ -n "$data" ]]; then
-    printf '%s\n' "$(jq -cn --arg ts "$ts" --arg event "$event" --argjson data "$data" \
-      '{ts:$ts, event:$event, data:$data}')" >> "$log_file"
-  else
-    printf '%s\n' "$(jq -cn --arg ts "$ts" --arg event "$event" \
-      '{ts:$ts, event:$event, data:{}}')" >> "$log_file"
-  fi
+  printf '%s\n' "$(jq -cn --arg ts "$ts" --arg event "$event" --argjson data "$data" \
+    '{ts:$ts, event:$event, data:$data}')" >> "${run_dir}/log.jsonl"
 }
 
 # --- Interpolation ---
@@ -70,7 +79,7 @@ cq_interpolate() {
   # Extract all {{var}} references
   while [[ "$result" =~ \{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\} ]]; do
     var="${BASH_REMATCH[1]}"
-    val=$(echo "$ctx_json" | jq -r --arg k "$var" '.[$k] // ""')
+    val=$(jq -r --arg k "$var" '.[$k] // ""' <<< "$ctx_json")
     # Replace all occurrences of this specific variable
     result="${result//\{\{${var}\}\}/${val}}"
   done
@@ -86,7 +95,7 @@ _cq_evaluate_single() {
   local lhs op rhs
 
   # Trim whitespace
-  condition=$(echo "$condition" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  condition=$(cq_trim "$condition")
 
   # Handle bare unary operators (just "empty" or "not_empty" after trimming)
   if [[ "$condition" == "empty" || "$condition" == "not_empty" ]]; then
@@ -95,14 +104,14 @@ _cq_evaluate_single() {
     rhs=""
   # Handle unary operators with lhs (e.g., "some_value empty")
   elif [[ "$condition" =~ ^(.*)[[:space:]]+(empty|not_empty)[[:space:]]*$ ]]; then
-    lhs=$(echo "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    lhs=$(cq_trim "${BASH_REMATCH[1]}")
     op="${BASH_REMATCH[2]}"
     rhs=""
   # Parse binary operators (order matters: >= before >, <= before <)
   elif [[ "$condition" =~ ^(.+)[[:space:]]+(==|!=|>=|<=|>|<|contains|matches)[[:space:]]+(.*)?$ ]]; then
-    lhs=$(echo "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    lhs=$(cq_trim "${BASH_REMATCH[1]}")
     op="${BASH_REMATCH[2]}"
-    rhs=$(echo "${BASH_REMATCH[3]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    rhs=$(cq_trim "${BASH_REMATCH[3]}")
   else
     return 1
   fi
@@ -157,7 +166,7 @@ cq_evaluate_condition() {
   local condition="$1"
 
   # Trim whitespace
-  condition=$(echo "$condition" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  condition=$(cq_trim "$condition")
 
   # Check for AND compound (split on " AND ")
   if [[ "$condition" == *" AND "* ]]; then
@@ -212,7 +221,14 @@ cq_default_config() {
 DEFAULTS
 }
 
+_CQ_CONFIG_CACHE=""
+
 cq_resolve_config() {
+  if [[ -n "$_CQ_CONFIG_CACHE" ]]; then
+    echo "$_CQ_CONFIG_CACHE"
+    return
+  fi
+
   local defaults global_cfg project_cfg
   defaults=$(cq_default_config)
   global_cfg="${HOME}/.cq/config.json"
@@ -229,6 +245,7 @@ cq_resolve_config() {
     pc=$(cat "$project_cfg")
     result=$(jq -n --argjson a "$result" --argjson b "$pc" '$a * $b' 2>/dev/null || echo "$result")
   fi
+  _CQ_CONFIG_CACHE="$result"
   echo "$result"
 }
 
@@ -236,7 +253,7 @@ cq_config_get() {
   local key="$1"
   local config
   config=$(cq_resolve_config)
-  echo "$config" | jq -r --arg k "$key" '.[$k] // empty'
+  jq -r --arg k "$key" '.[$k] // empty' <<< "$config"
 }
 
 # --- Locking ---
@@ -355,7 +372,7 @@ cq_fire_hook() {
 
   local config hook_cmd
   config=$(cq_resolve_config)
-  hook_cmd=$(echo "$config" | jq -r --arg h "$hook_name" '.notifications[$h] // empty')
+  hook_cmd=$(jq -r --arg h "$hook_name" '.notifications[$h] // empty' <<< "$config")
   [[ -z "$hook_cmd" ]] && return 0
 
   local ctx_json
@@ -368,12 +385,12 @@ cq_fire_hook() {
   # Add run_id and step_id to context for interpolation
   local run_id
   run_id=$(basename "$run_dir")
-  ctx_json=$(echo "$ctx_json" | jq --arg rid "$run_id" '. + {run_id: $rid}')
+  ctx_json=$(jq --arg rid "$run_id" '. + {run_id: $rid}' <<< "$ctx_json")
 
   if [[ -f "${run_dir}/meta.json" ]]; then
     local current_step
     current_step=$(jq -r '.current_step // ""' "${run_dir}/meta.json")
-    ctx_json=$(echo "$ctx_json" | jq --arg sid "$current_step" '. + {step_id: $sid}')
+    ctx_json=$(jq --arg sid "$current_step" '. + {step_id: $sid}' <<< "$ctx_json")
   fi
 
   local interpolated
@@ -413,5 +430,5 @@ cq_marker() {
   local status="$1"
   local config
   config=$(cq_resolve_config)
-  echo "$config" | jq -r --arg s "$status" '.markers[$s] // "?"'
+  jq -r --arg s "$status" '.markers[$s] // "?"' <<< "$config"
 }

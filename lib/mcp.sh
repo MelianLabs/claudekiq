@@ -28,75 +28,59 @@ _mcp_handle_initialize() {
     '{protocolVersion:$ver, capabilities:{tools:{}}, serverInfo:{name:$name, version:$version}}')"
 }
 
-# Convert a cq schema parameter to JSON Schema property
-_mcp_param_to_property() {
-  local param="$1"
-  local name type desc
-  name=$(echo "$param" | jq -r '.name' | sed 's/^--//' | sed 's/=.*$//' | tr '-' '_')
-  type=$(echo "$param" | jq -r '.type // "string"')
-  desc=$(echo "$param" | jq -r '.description // ""')
-
-  # Map cq types to JSON Schema types
-  local json_type="string"
-  case "$type" in
-    integer) json_type="integer" ;;
-    boolean) json_type="boolean" ;;
-    json)    json_type="string" ;;
-    *)       json_type="string" ;;
+# Map cq types to JSON Schema types
+_mcp_json_type() {
+  case "$1" in
+    integer) echo "integer" ;;
+    boolean) echo "boolean" ;;
+    *)       echo "string" ;;
   esac
+}
 
-  jq -cn --arg name "$name" --arg type "$json_type" --arg desc "$desc" \
-    '{($name): {type:$type, description:$desc}}'
+# Extract an argument from JSON, returning empty string if not present
+_mcp_arg() {
+  jq -r --arg k "$1" '.[$k] // empty' <<< "$2"
 }
 
 # Build the tools list from cq schema
 _mcp_build_tools() {
-  local tools="[]"
-
   # Commands to expose as MCP tools (skip meta commands like help, schema, version, init, config)
-  local commands=("start" "status" "list" "log" "pause" "resume" "cancel" "retry"
-                  "step-done" "skip" "todos" "todo" "ctx" "add-step" "add-steps"
-                  "set-next" "workflows" "heartbeat" "check-stale" "cleanup"
-                  "workers")
+  local commands
+  read -ra commands <<< "$(cq_command_list)"
 
+  local -a tool_items=()
   local cmd
   for cmd in "${commands[@]}"; do
     local schema_json
     schema_json=$(cmd_schema "$cmd" 2>/dev/null) || continue
 
     local desc
-    desc=$(echo "$schema_json" | jq -r '.description // ""')
+    desc=$(jq -r '.description // ""' <<< "$schema_json")
 
     # Build input schema from parameters
     local properties="{}"
     local required="[]"
-    local params
-    params=$(echo "$schema_json" | jq -c '.parameters // []')
-    local param_count
-    param_count=$(echo "$params" | jq 'length')
+    local params param_count
+    params=$(jq -c '.parameters // []' <<< "$schema_json")
+    param_count=$(jq 'length' <<< "$params")
 
     local i
     for ((i = 0; i < param_count; i++)); do
-      local param name type param_desc is_required
-      param=$(echo "$params" | jq --argjson i "$i" '.[$i]')
-      name=$(echo "$param" | jq -r '.name' | sed 's/^--//' | sed 's/=.*$//' | tr '-' '_')
-      type=$(echo "$param" | jq -r '.type // "string"')
-      param_desc=$(echo "$param" | jq -r '.description // ""')
-      is_required=$(echo "$param" | jq -r '.required // false')
+      local param name type param_desc is_required json_type
+      param=$(jq --argjson i "$i" '.[$i]' <<< "$params")
+      name=$(jq -r '.name' <<< "$param" | sed 's/^--//' | sed 's/=.*$//' | tr '-' '_')
+      type=$(jq -r '.type // "string"' <<< "$param")
+      param_desc=$(jq -r '.description // ""' <<< "$param")
+      is_required=$(jq -r '.required // false' <<< "$param")
 
-      local json_type="string"
-      case "$type" in
-        integer) json_type="integer" ;;
-        boolean) json_type="boolean" ;;
-        *)       json_type="string" ;;
-      esac
+      json_type=$(_mcp_json_type "$type")
 
-      properties=$(echo "$properties" | jq \
+      properties=$(jq \
         --arg name "$name" --arg type "$json_type" --arg desc "$param_desc" \
-        '. + {($name): {type:$type, description:$desc}}')
+        '. + {($name): {type:$type, description:$desc}}' <<< "$properties")
 
       if [[ "$is_required" == "true" ]]; then
-        required=$(echo "$required" | jq --arg n "$name" '. + [$n]')
+        required=$(jq --arg n "$name" '. + [$n]' <<< "$required")
       fi
     done
 
@@ -107,12 +91,16 @@ _mcp_build_tools() {
     # Tool name: replace hyphens with underscores, prefix with cq_
     local tool_name="cq_$(echo "$cmd" | tr '-' '_')"
 
-    tools=$(echo "$tools" | jq \
+    tool_items+=("$(jq -cn \
       --arg name "$tool_name" --arg desc "$desc" --argjson schema "$input_schema" \
-      '. + [{name:$name, description:$desc, inputSchema:$schema}]')
+      '{name:$name, description:$desc, inputSchema:$schema}')")
   done
 
-  echo "$tools"
+  if [[ ${#tool_items[@]} -gt 0 ]]; then
+    printf '%s\n' "${tool_items[@]}" | jq -s '.'
+  else
+    echo "[]"
+  fi
 }
 
 # Handle tools/list request
@@ -140,11 +128,10 @@ _mcp_dispatch_tool() {
   case "$cmd" in
     start)
       local template
-      template=$(echo "$arguments" | jq -r '.template // empty')
+      template=$(_mcp_arg "template" "$arguments")
       [[ -n "$template" ]] && args+=("$template")
-      # Add key=value pairs from remaining args
       local keys
-      keys=$(echo "$arguments" | jq -r 'to_entries[] | select(.key != "template") | "\(.key)=\(.value)"')
+      keys=$(jq -r 'to_entries[] | select(.key != "template") | "\(.key)=\(.value)"' <<< "$arguments")
       while IFS= read -r kv; do
         [[ -n "$kv" ]] && args+=("--$kv")
       done <<< "$keys"
@@ -152,7 +139,7 @@ _mcp_dispatch_tool() {
       ;;
     status)
       local run_id
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
+      run_id=$(_mcp_arg "run_id" "$arguments")
       [[ -n "$run_id" ]] && args+=("$run_id")
       cmd_status "${args[@]}"
       ;;
@@ -161,71 +148,54 @@ _mcp_dispatch_tool() {
       ;;
     log)
       local run_id tail_n
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      tail_n=$(echo "$arguments" | jq -r '.tail // empty')
+      run_id=$(_mcp_arg "run_id" "$arguments")
+      tail_n=$(_mcp_arg "tail" "$arguments")
       [[ -n "$run_id" ]] && args+=("$run_id")
       [[ -n "$tail_n" ]] && args+=("--tail" "$tail_n")
       cmd_log "${args[@]}"
       ;;
-    pause)
-      local run_id
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      cmd_pause "$run_id"
-      ;;
-    resume)
-      local run_id
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      cmd_resume "$run_id"
-      ;;
-    cancel)
-      local run_id
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      cmd_cancel "$run_id"
-      ;;
-    retry)
-      local run_id
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      cmd_retry "$run_id"
+    pause|resume|cancel|retry|heartbeat)
+      cmd_"$(echo "$cmd" | tr '-' '_')" "$(_mcp_arg "run_id" "$arguments")"
       ;;
     step-done)
       local run_id step_id outcome result_json
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      step_id=$(echo "$arguments" | jq -r '.step_id // empty')
-      outcome=$(echo "$arguments" | jq -r '.outcome // empty')
-      result_json=$(echo "$arguments" | jq -r '.result_json // empty')
+      run_id=$(_mcp_arg "run_id" "$arguments")
+      step_id=$(_mcp_arg "step_id" "$arguments")
+      outcome=$(_mcp_arg "outcome" "$arguments")
+      result_json=$(_mcp_arg "result_json" "$arguments")
       args=("$run_id" "$step_id" "$outcome")
       [[ -n "$result_json" ]] && args+=("$result_json")
       cmd_step_done "${args[@]}"
       ;;
     skip)
       local run_id step_id
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      step_id=$(echo "$arguments" | jq -r '.step_id // empty')
+      run_id=$(_mcp_arg "run_id" "$arguments")
+      step_id=$(_mcp_arg "step_id" "$arguments")
       args=("$run_id")
       [[ -n "$step_id" ]] && args+=("$step_id")
       cmd_skip "${args[@]}"
       ;;
     todos)
       local flow
-      flow=$(echo "$arguments" | jq -r '.flow // empty')
+      flow=$(_mcp_arg "flow" "$arguments")
       [[ -n "$flow" ]] && args+=("--flow" "$flow")
       cmd_todos "${args[@]}"
       ;;
     todo)
       local index action note
-      index=$(echo "$arguments" | jq -r '.index // empty')
-      action=$(echo "$arguments" | jq -r '.action // empty')
-      note=$(echo "$arguments" | jq -r '.note // empty')
+      index=$(_mcp_arg "index" "$arguments")
+      action=$(_mcp_arg "action" "$arguments")
+      note=$(_mcp_arg "note" "$arguments")
       args=("$index" "$action")
       [[ -n "$note" ]] && args+=("--note" "$note")
       cmd_todo "${args[@]}"
       ;;
     ctx)
       local subcommand key value run_id
-      subcommand=$(echo "$arguments" | jq -r '.subcommand // empty')
-      key=$(echo "$arguments" | jq -r '.key // empty')
-      value=$(echo "$arguments" | jq -r '.value // empty')
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
+      subcommand=$(_mcp_arg "subcommand" "$arguments")
+      key=$(_mcp_arg "key" "$arguments")
+      value=$(_mcp_arg "value" "$arguments")
+      run_id=$(_mcp_arg "run_id" "$arguments")
       if [[ -n "$subcommand" ]]; then
         args+=("$subcommand")
         [[ -n "$key" ]] && args+=("$key")
@@ -236,63 +206,60 @@ _mcp_dispatch_tool() {
       ;;
     add-step)
       local run_id step_json after
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      step_json=$(echo "$arguments" | jq -r '.step_json // empty')
-      after=$(echo "$arguments" | jq -r '.after // empty')
+      run_id=$(_mcp_arg "run_id" "$arguments")
+      step_json=$(_mcp_arg "step_json" "$arguments")
+      after=$(_mcp_arg "after" "$arguments")
       args=("$run_id" "$step_json")
       [[ -n "$after" ]] && args+=("--after" "$after")
       cmd_add_step "${args[@]}"
       ;;
     add-steps)
       local run_id flow after
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      flow=$(echo "$arguments" | jq -r '.flow // empty')
-      after=$(echo "$arguments" | jq -r '.after // empty')
+      run_id=$(_mcp_arg "run_id" "$arguments")
+      flow=$(_mcp_arg "flow" "$arguments")
+      after=$(_mcp_arg "after" "$arguments")
       args=("$run_id" "--flow" "$flow")
       [[ -n "$after" ]] && args+=("--after" "$after")
       cmd_add_steps "${args[@]}"
       ;;
     set-next)
       local run_id step_id target
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      step_id=$(echo "$arguments" | jq -r '.step_id // empty')
-      target=$(echo "$arguments" | jq -r '.target // empty')
+      run_id=$(_mcp_arg "run_id" "$arguments")
+      step_id=$(_mcp_arg "step_id" "$arguments")
+      target=$(_mcp_arg "target" "$arguments")
       cmd_set_next "$run_id" "$step_id" "$target"
       ;;
     workflows)
       local subcommand name
-      subcommand=$(echo "$arguments" | jq -r '.subcommand // "list"')
-      name=$(echo "$arguments" | jq -r '.name // empty')
+      subcommand=$(_mcp_arg "subcommand" "$arguments")
+      [[ -z "$subcommand" ]] && subcommand="list"
+      name=$(_mcp_arg "name" "$arguments")
       args=("$subcommand")
       [[ -n "$name" ]] && args+=("$name")
       cmd_workflows "${args[@]}"
       ;;
-    heartbeat)
-      local run_id
-      run_id=$(echo "$arguments" | jq -r '.run_id // empty')
-      cmd_heartbeat "$run_id"
-      ;;
     check-stale)
       local timeout mark
-      timeout=$(echo "$arguments" | jq -r '.timeout // empty')
-      mark=$(echo "$arguments" | jq -r '.mark // empty')
+      timeout=$(_mcp_arg "timeout" "$arguments")
+      mark=$(_mcp_arg "mark" "$arguments")
       [[ -n "$timeout" ]] && args+=("--timeout=$timeout")
       [[ "$mark" == "true" ]] && args+=("--mark")
       cmd_check_stale "${args[@]}"
       ;;
     cleanup)
       local max_age
-      max_age=$(echo "$arguments" | jq -r '.max_age // empty')
+      max_age=$(_mcp_arg "max_age" "$arguments")
       [[ -n "$max_age" ]] && args+=("--max-age=$max_age")
       cmd_cleanup "${args[@]}"
       ;;
     workers)
       local subcommand session_id job_id action data
-      subcommand=$(echo "$arguments" | jq -r '.subcommand // "help"')
-      session_id=$(echo "$arguments" | jq -r '.session_id // empty')
-      job_id=$(echo "$arguments" | jq -r '.job_id // empty')
-      action=$(echo "$arguments" | jq -r '.action // empty')
-      data=$(echo "$arguments" | jq -r '.data // empty')
+      subcommand=$(_mcp_arg "subcommand" "$arguments")
+      [[ -z "$subcommand" ]] && subcommand="help"
+      session_id=$(_mcp_arg "session_id" "$arguments")
+      job_id=$(_mcp_arg "job_id" "$arguments")
+      action=$(_mcp_arg "action" "$arguments")
+      data=$(_mcp_arg "data" "$arguments")
       args=("$subcommand")
       [[ -n "$session_id" ]] && args+=("$session_id")
       [[ -n "$job_id" ]] && args+=("$job_id")
@@ -312,8 +279,8 @@ _mcp_handle_tools_call() {
   local id="$1" params="$2"
 
   local tool_name arguments
-  tool_name=$(echo "$params" | jq -r '.name')
-  arguments=$(echo "$params" | jq -c '.arguments // {}')
+  tool_name=$(jq -r '.name' <<< "$params")
+  arguments=$(jq -c '.arguments // {}' <<< "$params")
 
   local output exit_code
   output=$(_mcp_dispatch_tool "$tool_name" "$arguments" 2>&1) && exit_code=0 || exit_code=$?
@@ -338,9 +305,9 @@ cq_mcp_serve() {
     [[ -z "$line" ]] && continue
 
     local id method params
-    id=$(echo "$line" | jq -r '.id // null')
-    method=$(echo "$line" | jq -r '.method // ""')
-    params=$(echo "$line" | jq -c '.params // {}')
+    id=$(jq -r '.id // null' <<< "$line")
+    method=$(jq -r '.method // ""' <<< "$line")
+    params=$(jq -c '.params // {}' <<< "$line")
 
     case "$method" in
       initialize)

@@ -49,12 +49,9 @@ _workers_init() {
     '{session_id:$sid, created_at:$ts, parent_root:$root}' \
     > "${workers_dir}/manifest.json"
 
-  if [[ "$CQ_JSON" == "true" ]]; then
-    jq -cn --arg sid "$session_id" --arg dir "$workers_dir" \
-      '{session_id:$sid, directory:$dir}'
-  else
+  cq_json_out --arg sid "$session_id" --arg dir "$workers_dir" \
+    '{session_id:$sid, directory:$dir}' || \
     echo "Worker session ${session_id} created."
-  fi
 }
 
 _workers_status() {
@@ -65,26 +62,31 @@ _workers_status() {
     cq_die "Worker session '${session_id}' not found"
   fi
 
-  local jobs_json="[]"
+  local -a job_items=()
   local status_file
   for status_file in "${workers_dir}"/*.status.json; do
     [[ -f "$status_file" ]] || continue
-    local job_data
+    local job_data job_id
     job_data=$(cat "$status_file")
-    local job_id
     job_id=$(basename "$status_file" .status.json)
-    job_data=$(echo "$job_data" | jq --arg jid "$job_id" '. + {job_id:$jid}')
-    jobs_json=$(echo "$jobs_json" | jq --argjson j "$job_data" '. + [$j]')
+    job_data=$(jq --arg jid "$job_id" '. + {job_id:$jid}' <<< "$job_data")
+    job_items+=("$job_data")
   done
 
+  local jobs_json
+  if [[ ${#job_items[@]} -gt 0 ]]; then
+    jobs_json=$(printf '%s\n' "${job_items[@]}" | jq -s '.')
+  else
+    jobs_json="[]"
+  fi
+
   # Aggregate counts
-  local running gated completed failed
-  running=$(echo "$jobs_json" | jq '[.[] | select(.status=="running")] | length')
-  gated=$(echo "$jobs_json" | jq '[.[] | select(.status=="gated")] | length')
-  completed=$(echo "$jobs_json" | jq '[.[] | select(.status=="completed")] | length')
-  failed=$(echo "$jobs_json" | jq '[.[] | select(.status=="failed")] | length')
-  local total
-  total=$(echo "$jobs_json" | jq 'length')
+  local running gated completed failed total
+  running=$(jq '[.[] | select(.status=="running")] | length' <<< "$jobs_json")
+  gated=$(jq '[.[] | select(.status=="gated")] | length' <<< "$jobs_json")
+  completed=$(jq '[.[] | select(.status=="completed")] | length' <<< "$jobs_json")
+  failed=$(jq '[.[] | select(.status=="failed")] | length' <<< "$jobs_json")
+  total=$(jq 'length' <<< "$jobs_json")
 
   if [[ "$CQ_JSON" == "true" ]]; then
     jq -cn \
@@ -98,7 +100,7 @@ _workers_status() {
       '{session_id:$sid, total:$total, running:$running, gated:$gated, completed:$completed, failed:$failed, jobs:$jobs}'
   else
     echo "Session: ${session_id} — ${total} workers (${running} running, ${gated} gated, ${completed} completed, ${failed} failed)"
-    echo "$jobs_json" | jq -r '.[] | "  [\(.job_id)] \(.status) — step: \(.step // "n/a")"'
+    jq -r '.[] | "  [\(.job_id)] \(.status) — step: \(.step // "n/a")"' <<< "$jobs_json"
   fi
 }
 
@@ -131,12 +133,9 @@ _workers_answer() {
 
   echo "$answer_json" > "${workers_dir}/${job_id}.answer.json"
 
-  if [[ "$CQ_JSON" == "true" ]]; then
-    jq -cn --arg sid "$session_id" --arg jid "$job_id" --arg action "$action" \
-      '{session_id:$sid, job_id:$jid, action:$action}'
-  else
+  cq_json_out --arg sid "$session_id" --arg jid "$job_id" --arg action "$action" \
+    '{session_id:$sid, job_id:$jid, action:$action}' || \
     echo "Answer sent to worker ${job_id}: ${action}"
-  fi
 }
 
 _workers_cleanup() {
@@ -152,11 +151,7 @@ _workers_cleanup() {
 
   local workers_base="${CQ_PROJECT_ROOT}/.claudekiq/workers"
   if [[ ! -d "$workers_base" ]]; then
-    if [[ "$CQ_JSON" == "true" ]]; then
-      jq -cn '{removed:0}'
-    else
-      echo "No worker sessions found."
-    fi
+    cq_json_out '{removed:0}' || echo "No worker sessions found."
     return 0
   fi
 
@@ -175,9 +170,6 @@ _workers_cleanup() {
     fi
   done
 
-  if [[ "$CQ_JSON" == "true" ]]; then
-    jq -cn --argjson n "$removed" '{removed:$n}'
-  else
+  cq_json_out --argjson n "$removed" '{removed:$n}' || \
     echo "Removed ${removed} expired worker session(s)."
-  fi
 }

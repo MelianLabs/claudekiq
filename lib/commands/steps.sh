@@ -7,11 +7,9 @@ cmd_step_done() {
   local outcome="${3:?Usage: cq step-done <run_id> <step_id> pass|fail}"
   local result_json="${4:-null}"
 
-  cq_run_exists "$run_id" || cq_die "Run not found: ${run_id}"
-  [[ "$outcome" == "pass" || "$outcome" == "fail" ]] || cq_die "Outcome must be 'pass' or 'fail'"
-
   local run_dir
-  run_dir=$(cq_run_dir "$run_id")
+  run_dir=$(cq_require_run "$run_id" "cq step-done <run_id> <step_id> pass|fail [result_json]")
+  [[ "$outcome" == "pass" || "$outcome" == "fail" ]] || cq_die "Outcome must be 'pass' or 'fail'"
 
   cq_with_lock "$run_dir" _step_done_locked "$run_id" "$step_id" "$outcome" "$result_json"
 
@@ -34,8 +32,8 @@ _step_done_locked() {
   # Update step state
   local state step_state visits
   state=$(cq_read_state "$run_id")
-  step_state=$(echo "$state" | jq --arg id "$step_id" '.[$id]')
-  visits=$(echo "$step_state" | jq '.visits // 0')
+  step_state=$(jq --arg id "$step_id" '.[$id]' <<< "$state")
+  visits=$(jq '.visits // 0' <<< "$step_state")
   visits=$((visits + 1))
 
   local new_status
@@ -43,10 +41,10 @@ _step_done_locked() {
 
   # Validate result_json
   if [[ "$result_json" != "null" ]]; then
-    echo "$result_json" | jq '.' >/dev/null 2>&1 || result_json="null"
+    jq '.' <<< "$result_json" >/dev/null 2>&1 || result_json="null"
   fi
 
-  state=$(echo "$state" | jq \
+  state=$(jq \
     --arg id "$step_id" \
     --arg status "$new_status" \
     --argjson visits "$visits" \
@@ -54,7 +52,7 @@ _step_done_locked() {
     --arg finished_at "$ts" \
     --argjson result_json "$result_json" \
     '.[$id].status = $status | .[$id].visits = $visits | .[$id].result = $result |
-     .[$id].finished_at = $finished_at | .[$id].result_data = $result_json')
+     .[$id].finished_at = $finished_at | .[$id].result_data = $result_json' <<< "$state")
   cq_write_json "${run_dir}/state.json" "$state"
 
   # Log step completion
@@ -69,7 +67,7 @@ _step_done_locked() {
   local step
   step=$(cq_get_step "$run_id" "$step_id")
   local gate
-  gate=$(echo "$step" | jq -r '.gate // "auto"')
+  gate=$(jq -r '.gate // "auto"' <<< "$step")
 
   _handle_gate "$run_id" "$step_id" "$outcome" "$gate" "$visits"
 }
@@ -81,17 +79,17 @@ _extract_outputs() {
   local step
   step=$(cq_get_step "$run_id" "$step_id")
   local outputs_type
-  outputs_type=$(echo "$step" | jq -r '.outputs | type')
+  outputs_type=$(jq -r '.outputs | type' <<< "$step")
 
   if [[ "$outputs_type" == "object" ]]; then
     # outputs is a map of ctx_key -> jq_filter
     local keys
-    keys=$(echo "$step" | jq -r '.outputs | keys[]')
+    keys=$(jq -r '.outputs | keys[]' <<< "$step")
     local key filter value
     while IFS= read -r key; do
       [[ -z "$key" ]] && continue
-      filter=$(echo "$step" | jq -r --arg k "$key" '.outputs[$k]')
-      value=$(echo "$result_json" | jq -r "$filter" 2>/dev/null || echo "")
+      filter=$(jq -r --arg k "$key" '.outputs[$k]' <<< "$step")
+      value=$(jq -r "$filter" <<< "$result_json" 2>/dev/null || echo "")
       if [[ -n "$value" && "$value" != "null" ]]; then
         cq_ctx_set "$run_id" "$key" "$value"
       fi
@@ -99,8 +97,8 @@ _extract_outputs() {
   elif [[ "$outputs_type" == "array" ]]; then
     # outputs is a list of keys to extract from result (top-level)
     local key value
-    for key in $(echo "$step" | jq -r '.outputs[]'); do
-      value=$(echo "$result_json" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null)
+    for key in $(jq -r '.outputs[]' <<< "$step"); do
+      value=$(jq -r --arg k "$key" '.[$k] // empty' <<< "$result_json" 2>/dev/null)
       if [[ -n "$value" ]]; then
         cq_ctx_set "$run_id" "$key" "$value"
       fi
@@ -119,10 +117,8 @@ _handle_gate() {
       ;;
     human)
       if [[ "$CQ_HEADLESS" == "true" ]]; then
-        # Headless: auto-approve
         _advance_run "$run_id" "$step_id" "pass"
       else
-        # Create TODO and set run to gated
         local desc
         desc=$(cq_get_step "$run_id" "$step_id" | jq -r '.description // .name // .id')
         cq_create_todo "$run_id" "$step_id" "review" "$desc"
@@ -136,41 +132,43 @@ _handle_gate() {
       if [[ "$outcome" == "pass" ]]; then
         _advance_run "$run_id" "$step_id" "pass"
       else
-        # Check max_visits
-        local step max_visits
-        step=$(cq_get_step "$run_id" "$step_id")
-        max_visits=$(echo "$step" | jq -r '.max_visits // 0')
-        max_visits=${max_visits:-0}
-
-        if [[ "$max_visits" -gt 0 && "$visits" -ge "$max_visits" ]]; then
-          if [[ "$CQ_HEADLESS" == "true" ]]; then
-            # Headless: fail the run
-            cq_update_meta "$run_id" '.status = "failed"'
-            cq_log_event "$run_dir" "run_failed" \
-              "$(jq -cn --arg step "$step_id" '{step:$step, reason:"max_visits_exceeded_headless"}')"
-            cq_fire_hook "on_fail" "$run_dir"
-          else
-            # Create TODO for override
-            local desc
-            desc="Max visits (${max_visits}) reached for step '${step_id}'"
-            cq_create_todo "$run_id" "$step_id" "override" "$desc"
-            cq_update_meta "$run_id" '.status = "gated"'
-            cq_log_event "$run_dir" "gate_review_escalated" \
-              "$(jq -cn --arg step "$step_id" --argjson visits "$visits" --argjson max "$max_visits" \
-                '{step:$step, visits:$visits, max_visits:$max}')"
-            cq_info "$(cq_marker "gated") Step '${step_id}' exceeded max visits — escalated to human"
-          fi
-        else
-          # Retry via on_fail route
-          _advance_run "$run_id" "$step_id" "fail"
-        fi
+        _handle_review_failure "$run_id" "$step_id" "$visits"
       fi
       ;;
     *)
-      # Unknown gate, treat as auto
       _advance_run "$run_id" "$step_id" "$outcome"
       ;;
   esac
+}
+
+_handle_review_failure() {
+  local run_id="$1" step_id="$2" visits="$3"
+  local run_dir
+  run_dir=$(cq_run_dir "$run_id")
+
+  local step max_visits
+  step=$(cq_get_step "$run_id" "$step_id")
+  max_visits=$(jq -r '.max_visits // 0' <<< "$step")
+  max_visits=${max_visits:-0}
+
+  if [[ "$max_visits" -gt 0 && "$visits" -ge "$max_visits" ]]; then
+    if [[ "$CQ_HEADLESS" == "true" ]]; then
+      cq_update_meta "$run_id" '.status = "failed"'
+      cq_log_event "$run_dir" "run_failed" \
+        "$(jq -cn --arg step "$step_id" '{step:$step, reason:"max_visits_exceeded_headless"}')"
+      cq_fire_hook "on_fail" "$run_dir"
+    else
+      local desc="Max visits (${max_visits}) reached for step '${step_id}'"
+      cq_create_todo "$run_id" "$step_id" "override" "$desc"
+      cq_update_meta "$run_id" '.status = "gated"'
+      cq_log_event "$run_dir" "gate_review_escalated" \
+        "$(jq -cn --arg step "$step_id" --argjson visits "$visits" --argjson max "$max_visits" \
+          '{step:$step, visits:$visits, max_visits:$max}')"
+      cq_info "$(cq_marker "gated") Step '${step_id}' exceeded max visits — escalated to human"
+    fi
+  else
+    _advance_run "$run_id" "$step_id" "fail"
+  fi
 }
 
 _advance_run() {
@@ -202,8 +200,8 @@ _advance_run() {
     # Mark next step as running
     local state
     state=$(cq_read_state "$run_id")
-    state=$(echo "$state" | jq --arg id "$next_step" --arg ts "$ts" \
-      '.[$id].status = "running" | .[$id].started_at = $ts | .[$id].attempt = ((.[$id].attempt // 0) + 1)')
+    state=$(jq --arg id "$next_step" --arg ts "$ts" \
+      '.[$id].status = "running" | .[$id].started_at = $ts | .[$id].attempt = ((.[$id].attempt // 0) + 1)' <<< "$state")
     cq_write_json "${run_dir}/state.json" "$state"
 
     cq_log_event "$run_dir" "step_started" \
@@ -215,25 +213,23 @@ cmd_skip() {
   local run_id="${1:?Usage: cq skip <run_id> [step_id]}"
   local step_id="${2:-}"
 
-  cq_run_exists "$run_id" || cq_die "Run not found: ${run_id}"
+  local run_dir
+  run_dir=$(cq_require_run "$run_id" "cq skip <run_id> [step_id]")
 
   # Default to current step
   if [[ -z "$step_id" ]]; then
-    step_id=$(jq -r '.current_step' "$(cq_run_dir "$run_id")/meta.json")
+    step_id=$(jq -r '.current_step' "${run_dir}/meta.json")
   fi
   [[ -z "$step_id" || "$step_id" == "null" ]] && cq_die "No current step to skip"
 
-  local run_dir
-  run_dir=$(cq_run_dir "$run_id")
-
   cq_with_lock "$run_dir" _skip_locked "$run_id" "$step_id"
-
-  cq_info "$(cq_marker "skipped") Skipped step '${step_id}'"
 
   if [[ "$CQ_JSON" == "true" ]]; then
     local meta
     meta=$(cq_read_meta "$run_id")
     jq -cn --arg step "$step_id" --argjson meta "$meta" '{skipped:$step, meta:$meta}'
+  else
+    cq_info "$(cq_marker "skipped") Skipped step '${step_id}'"
   fi
 }
 
@@ -247,8 +243,8 @@ _skip_locked() {
   # Mark step as skipped
   local state
   state=$(cq_read_state "$run_id")
-  state=$(echo "$state" | jq --arg id "$step_id" --arg ts "$ts" \
-    '.[$id].status = "skipped" | .[$id].finished_at = $ts')
+  state=$(jq --arg id "$step_id" --arg ts "$ts" \
+    '.[$id].status = "skipped" | .[$id].finished_at = $ts' <<< "$state")
   cq_write_json "${run_dir}/state.json" "$state"
 
   cq_log_event "$run_dir" "step_skipped" \

@@ -15,29 +15,23 @@ cmd_todos() {
   local todos
   todos=$(cq_list_todos "$filter_run")
   local count
-  count=$(echo "$todos" | jq 'length')
+  count=$(jq 'length' <<< "$todos")
 
   if [[ "$CQ_JSON" == "true" ]]; then
-    echo "$todos" | jq '.'
+    jq '.' <<< "$todos"
   else
     if [[ "$count" -eq 0 ]]; then
       echo "No pending actions."
       return
     fi
     echo "Pending actions:"
-    local i
-    for ((i = 0; i < count; i++)); do
-      local todo step_name action run_id description priority
-      todo=$(echo "$todos" | jq --argjson i "$i" '.[$i]')
-      step_name=$(echo "$todo" | jq -r '.step_name')
-      action=$(echo "$todo" | jq -r '.action')
-      run_id=$(echo "$todo" | jq -r '.run_id')
-      description=$(echo "$todo" | jq -r '.description // ""')
-      priority=$(echo "$todo" | jq -r '.priority')
-      printf "  #%d  [%s] %s — %s\n" "$((i + 1))" "$priority" "$step_name" "$action"
-      [[ -n "$description" ]] && printf "       %s\n" "$description"
-      printf "       run: %s\n" "$run_id"
-    done
+    jq -r '.[] | "\(.step_name)\t\(.action)\t\(.run_id)\t\(.description // "")\t\(.priority)"' <<< "$todos" | \
+      { local i=0; while IFS=$'\t' read -r step_name action run_id description priority; do
+        i=$((i + 1))
+        printf "  #%d  [%s] %s — %s\n" "$i" "$priority" "$step_name" "$action"
+        [[ -n "$description" ]] && printf "       %s\n" "$description"
+        printf "       run: %s\n" "$run_id"
+      done; }
   fi
 }
 
@@ -65,14 +59,12 @@ cmd_todo() {
   [[ -z "$todo" || "$todo" == "null" ]] && cq_die "No pending action at #${index}"
 
   local todo_id run_id step_id
-  todo_id=$(echo "$todo" | jq -r '.id')
-  run_id=$(echo "$todo" | jq -r '.run_id')
-  step_id=$(echo "$todo" | jq -r '.step_id')
-
-  cq_run_exists "$run_id" || cq_die "Run not found: ${run_id}"
+  todo_id=$(jq -r '.id' <<< "$todo")
+  run_id=$(jq -r '.run_id' <<< "$todo")
+  step_id=$(jq -r '.step_id' <<< "$todo")
 
   local run_dir
-  run_dir=$(cq_run_dir "$run_id")
+  run_dir=$(cq_require_run "$run_id" "cq todo <#> <action>")
 
   case "$action" in
     approve|override)
@@ -82,8 +74,8 @@ cmd_todo() {
       local state ts
       ts=$(cq_now)
       state=$(cq_read_state "$run_id")
-      state=$(echo "$state" | jq --arg id "$step_id" --arg ts "$ts" \
-        '.[$id].status = "passed" | .[$id].result = "pass" | .[$id].finished_at = $ts')
+      state=$(jq --arg id "$step_id" --arg ts "$ts" \
+        '.[$id].status = "passed" | .[$id].result = "pass" | .[$id].finished_at = $ts' <<< "$state")
       cq_write_json "${run_dir}/state.json" "$state"
 
       cq_log_event "$run_dir" "todo_${action}" \
@@ -112,8 +104,6 @@ cmd_todo() {
       ;;
   esac
 
-  if [[ "$CQ_JSON" == "true" ]]; then
-    jq -cn --arg todo_id "$todo_id" --arg action "$action" --arg run_id "$run_id" \
-      '{todo_id:$todo_id, action:$action, run_id:$run_id}'
-  fi
+  cq_json_out --arg todo_id "$todo_id" --arg action "$action" --arg run_id "$run_id" \
+    '{todo_id:$todo_id, action:$action, run_id:$run_id}' || true
 }

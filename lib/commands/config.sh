@@ -10,11 +10,8 @@ cmd_config() {
       local key="${1:?Usage: cq config get <key>}"
       local val
       val=$(cq_config_get "$key")
-      if [[ "$CQ_JSON" == "true" ]]; then
-        jq -cn --arg k "$key" --arg v "$val" '{($k):$v}'
-      else
+      cq_json_out --arg k "$key" --arg v "$val" '{($k):$v}' || \
         echo "$val"
-      fi
       ;;
     set)
       shift
@@ -40,23 +37,21 @@ cmd_config() {
       local config
       config=$(cat "$config_file")
       # Try to parse value as JSON, fall back to string
-      if echo "$value" | jq '.' >/dev/null 2>&1; then
-        config=$(echo "$config" | jq --arg k "$key" --argjson v "$value" '.[$k] = $v')
+      if jq '.' <<< "$value" >/dev/null 2>&1; then
+        config=$(jq --arg k "$key" --argjson v "$value" '.[$k] = $v' <<< "$config")
       else
-        config=$(echo "$config" | jq --arg k "$key" --arg v "$value" '.[$k] = $v')
+        config=$(jq --arg k "$key" --arg v "$value" '.[$k] = $v' <<< "$config")
       fi
-      echo "$config" | jq '.' > "$config_file"
+      jq '.' <<< "$config" > "$config_file"
 
-      cq_info "Set ${key}=${value}"
-      if [[ "$CQ_JSON" == "true" ]]; then
-        jq -cn --arg k "$key" --arg v "$value" '{key:$k, value:$v}'
-      fi
+      cq_json_out --arg k "$key" --arg v "$value" '{key:$k, value:$v}' || \
+        cq_info "Set ${key}=${value}"
       ;;
     "")
       # Show resolved config
       local config
       config=$(cq_resolve_config)
-      echo "$config" | jq '.'
+      jq '.' <<< "$config"
       ;;
     *)
       cq_die "Unknown config subcommand: ${subcmd}"

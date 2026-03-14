@@ -34,7 +34,7 @@ cmd_start() {
 
   # Determine priority
   if [[ -z "$priority" ]]; then
-    priority=$(echo "$wf_json" | jq -r '.default_priority // empty')
+    priority=$(jq -r '.default_priority // empty' <<< "$wf_json")
     [[ -z "$priority" ]] && priority=$(cq_config_get "default_priority")
     [[ -z "$priority" ]] && priority="normal"
   fi
@@ -43,7 +43,7 @@ cmd_start() {
   # Check concurrency
   local config max_concurrency running_count
   config=$(cq_resolve_config)
-  max_concurrency=$(echo "$config" | jq -r '.concurrency // 1')
+  max_concurrency=$(jq -r '.concurrency // 1' <<< "$config")
   running_count=$(_count_running_runs)
   local initial_status="running"
   if [[ "$running_count" -ge "$max_concurrency" ]]; then
@@ -61,23 +61,22 @@ cmd_start() {
   ts=$(cq_now)
 
   # Build context from defaults + CLI args
-  local ctx
-  local defaults
-  defaults=$(echo "$wf_json" | jq '.defaults // {}')
-  ctx=$(echo "$defaults" | jq '.')
+  local ctx defaults
+  defaults=$(jq '.defaults // {}' <<< "$wf_json")
+  ctx="$defaults"
 
   # Apply CLI context variables
   local idx=0
   while [[ $idx -lt ${#ctx_vars[@]} ]]; do
     local k="${ctx_vars[$idx]}"
     local v="${ctx_vars[$((idx + 1))]}"
-    ctx=$(echo "$ctx" | jq --arg k "$k" --arg v "$v" '.[$k] = $v')
+    ctx=$(jq --arg k "$k" --arg v "$v" '.[$k] = $v' <<< "$ctx")
     idx=$((idx + 2))
   done
 
   # Write meta.json
   local first_step
-  first_step=$(echo "$wf_json" | jq -r '.steps[0].id')
+  first_step=$(jq -r '.steps[0].id' <<< "$wf_json")
   local meta
   meta=$(jq -cn \
     --arg id "$run_id" \
@@ -98,15 +97,15 @@ cmd_start() {
 
   # Write steps.json (copy step definitions)
   local steps
-  steps=$(echo "$wf_json" | jq '.steps')
+  steps=$(jq '.steps' <<< "$wf_json")
   cq_write_json "${run_dir}/steps.json" "$steps"
 
   # Write state.json (initialize all steps as pending)
   local state='{}'
   local step_id
-  for step_id in $(echo "$steps" | jq -r '.[].id'); do
-    state=$(echo "$state" | jq --arg id "$step_id" \
-      '.[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null}')
+  for step_id in $(jq -r '.[].id' <<< "$steps"); do
+    state=$(jq --arg id "$step_id" \
+      '.[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null}' <<< "$state")
   done
   cq_write_json "${run_dir}/state.json" "$state"
 
@@ -118,9 +117,9 @@ cmd_start() {
   # Fire on_start hook
   cq_fire_hook "on_start" "$run_dir"
 
-  if [[ "$CQ_JSON" == "true" ]]; then
-    jq -cn --arg id "$run_id" --arg status "$initial_status" --arg template "$template" \
-      '{run_id:$id, status:$status, template:$template}'
+  if cq_json_out --arg id "$run_id" --arg status "$initial_status" --arg template "$template" \
+    '{run_id:$id, status:$status, template:$template}'; then
+    :
   else
     local marker
     marker=$(cq_marker "$initial_status")
@@ -157,30 +156,33 @@ _status_dashboard() {
   done
 
   if [[ ${#all_runs[@]} -eq 0 ]]; then
-    if [[ "$CQ_JSON" == "true" ]]; then
-      echo '{"runs":[],"todos":[]}'
-    else
-      echo "No active workflow runs."
-    fi
+    cq_json_out '{runs:[], todos:[]}' || echo "No active workflow runs."
     return
   fi
 
+  # Collect run data once
+  local -a run_metas=()
+  for run_id in "${all_runs[@]}"; do
+    local meta
+    meta=$(cq_read_meta "$run_id" 2>/dev/null) || continue
+    local run_dir="${CQ_PROJECT_ROOT}/.claudekiq/runs/${run_id}"
+    local hb_file="${run_dir}/.heartbeat"
+    if [[ -f "$hb_file" ]]; then
+      local hb_age
+      hb_age=$(cq_file_age "$hb_file")
+      meta=$(jq --argjson age "$hb_age" '. + {heartbeat_age:$age}' <<< "$meta")
+    fi
+    run_metas+=("$meta")
+  done
+
+  local runs_json
+  if [[ ${#run_metas[@]} -gt 0 ]]; then
+    runs_json=$(printf '%s\n' "${run_metas[@]}" | jq -s '.')
+  else
+    runs_json="[]"
+  fi
+
   if [[ "$CQ_JSON" == "true" ]]; then
-    local runs_json="[]"
-    for run_id in "${all_runs[@]}"; do
-      local meta
-      meta=$(cq_read_meta "$run_id" 2>/dev/null) || continue
-      # Add heartbeat info if available
-      local run_dir hb_file
-      run_dir=$(cq_run_dir "$run_id")
-      hb_file="${run_dir}/.heartbeat"
-      if [[ -f "$hb_file" ]]; then
-        local hb_age
-        hb_age=$(cq_file_age "$hb_file")
-        meta=$(echo "$meta" | jq --argjson age "$hb_age" '. + {heartbeat_age:$age}')
-      fi
-      runs_json=$(echo "$runs_json" | jq --argjson m "$meta" '. + [$m]')
-    done
     local todos
     todos=$(cq_list_todos)
     jq -cn --argjson runs "$runs_json" --argjson todos "$todos" \
@@ -188,42 +190,33 @@ _status_dashboard() {
   else
     echo "=== Workflow Dashboard ==="
     echo ""
-    for run_id in "${all_runs[@]}"; do
-      local meta status template priority current_step
-      meta=$(cq_read_meta "$run_id" 2>/dev/null) || continue
-      status=$(echo "$meta" | jq -r '.status')
-      template=$(echo "$meta" | jq -r '.template')
-      priority=$(echo "$meta" | jq -r '.priority')
-      current_step=$(echo "$meta" | jq -r '.current_step // "-"')
-      local marker
-      marker=$(cq_marker "$status")
-      printf "  %s %-8s %-15s %-8s step: %s\n" "$marker" "$run_id" "$template" "[$priority]" "$current_step"
-    done
+    jq -r '.[] | "\(.id)\t\(.status)\t\(.template)\t\(.priority)\t\(.current_step // "-")"' <<< "$runs_json" | \
+      while IFS=$'\t' read -r id status template priority current_step; do
+        local marker
+        marker=$(cq_marker "$status")
+        printf "  %s %-8s %-15s %-8s step: %s\n" "$marker" "$id" "$template" "[$priority]" "$current_step"
+      done
 
     # Show pending TODOs
     local todos
     todos=$(cq_list_todos)
     local todo_count
-    todo_count=$(echo "$todos" | jq 'length')
+    todo_count=$(jq 'length' <<< "$todos")
     if [[ "$todo_count" -gt 0 ]]; then
       echo ""
       echo "Pending actions (${todo_count}):"
-      local i
-      for ((i = 0; i < todo_count; i++)); do
-        local todo step_name action run
-        todo=$(echo "$todos" | jq --argjson i "$i" '.[$i]')
-        step_name=$(echo "$todo" | jq -r '.step_name')
-        action=$(echo "$todo" | jq -r '.action')
-        run=$(echo "$todo" | jq -r '.run_id')
-        printf "  #%d  %s — %s (run %s)\n" "$((i + 1))" "$step_name" "$action" "$run"
-      done
+      jq -r '.[] | "\(.step_name)\t\(.action)\t\(.run_id)"' <<< "$todos" | \
+        { local i=0; while IFS=$'\t' read -r step_name action run; do
+          i=$((i + 1))
+          printf "  #%d  %s — %s (run %s)\n" "$i" "$step_name" "$action" "$run"
+        done; }
     fi
   fi
 }
 
 _status_detail() {
   local run_id="$1"
-  cq_run_exists "$run_id" || cq_die "Run not found: ${run_id}"
+  cq_require_run "$run_id" "cq status <run_id>" >/dev/null
 
   local meta ctx steps state
   meta=$(cq_read_meta "$run_id")
@@ -237,11 +230,11 @@ _status_detail() {
       '{meta:$meta, ctx:$ctx, steps:$steps, state:$state}'
   else
     local status template priority current_step created_at
-    status=$(echo "$meta" | jq -r '.status')
-    template=$(echo "$meta" | jq -r '.template')
-    priority=$(echo "$meta" | jq -r '.priority')
-    current_step=$(echo "$meta" | jq -r '.current_step // "-"')
-    created_at=$(echo "$meta" | jq -r '.created_at')
+    status=$(jq -r '.status' <<< "$meta")
+    template=$(jq -r '.template' <<< "$meta")
+    priority=$(jq -r '.priority' <<< "$meta")
+    current_step=$(jq -r '.current_step // "-"' <<< "$meta")
+    created_at=$(jq -r '.created_at' <<< "$meta")
 
     local marker
     marker=$(cq_marker "$status")
@@ -253,15 +246,10 @@ _status_detail() {
     echo ""
     echo "Steps:"
 
-    local step_count i
-    step_count=$(echo "$steps" | jq 'length')
-    for ((i = 0; i < step_count; i++)); do
-      local sid stype
-      sid=$(echo "$steps" | jq -r --argjson i "$i" '.[$i].id')
-      stype=$(echo "$steps" | jq -r --argjson i "$i" '.[$i].type')
-      local sstatus svisits
-      sstatus=$(echo "$state" | jq -r --arg id "$sid" '.[$id].status // "pending"')
-      svisits=$(echo "$state" | jq -r --arg id "$sid" '.[$id].visits // 0')
+    # Use jq to format step list in one call instead of N+1 calls per step
+    jq -r --argjson state "$state" '
+      .[] | "\(.id)\t\(.type)\t\($state[.id].status // "pending")\t\($state[.id].visits // 0)"
+    ' <<< "$steps" | while IFS=$'\t' read -r sid stype sstatus svisits; do
       local sm
       sm=$(cq_marker "$sstatus")
       printf "  %s %-20s %-8s %-10s visits:%s\n" "$sm" "$sid" "$stype" "$sstatus" "$svisits"
@@ -270,23 +258,30 @@ _status_detail() {
 }
 
 cmd_list() {
-  local runs_json="[]"
+  local -a run_items=()
   local run_id
 
   for run_id in $(cq_run_ids); do
     local meta
     meta=$(cq_read_meta "$run_id" 2>/dev/null) || continue
-    runs_json=$(echo "$runs_json" | jq --argjson m "$meta" '. + [$m]')
+    run_items+=("$meta")
   done
 
-  if [[ "$CQ_JSON" == "true" ]]; then
-    echo "$runs_json" | jq '.'
+  local runs_json
+  if [[ ${#run_items[@]} -gt 0 ]]; then
+    runs_json=$(printf '%s\n' "${run_items[@]}" | jq -s '.')
   else
-    if [[ $(echo "$runs_json" | jq 'length') -eq 0 ]]; then
+    runs_json="[]"
+  fi
+
+  if [[ "$CQ_JSON" == "true" ]]; then
+    jq '.' <<< "$runs_json"
+  else
+    if [[ $(jq 'length' <<< "$runs_json") -eq 0 ]]; then
       echo "No workflow runs."
       return
     fi
-    echo "$runs_json" | jq -r '.[] | "\(.id)\t\(.status)\t\(.template)\t\(.priority)"' | \
+    jq -r '.[] | "\(.id)\t\(.status)\t\(.template)\t\(.priority)"' <<< "$runs_json" | \
       while IFS=$'\t' read -r id status template priority; do
         local marker
         marker=$(cq_marker "$status")
@@ -308,10 +303,10 @@ cmd_log() {
   done
 
   [[ -z "$run_id" ]] && cq_die "Usage: cq log <run_id> [--tail N]"
-  cq_run_exists "$run_id" || cq_die "Run not found: ${run_id}"
+  local run_dir
+  run_dir=$(cq_require_run "$run_id" "cq log <run_id> [--tail N]")
 
-  local log_file
-  log_file="$(cq_run_dir "$run_id")/log.jsonl"
+  local log_file="${run_dir}/log.jsonl"
   [[ -f "$log_file" ]] || { echo "No log entries."; return; }
 
   if [[ "$CQ_JSON" == "true" ]]; then
@@ -328,9 +323,9 @@ cmd_log() {
       cat "$log_file"
     fi | while IFS= read -r line; do
       local ts event data_str
-      ts=$(echo "$line" | jq -r '.ts')
-      event=$(echo "$line" | jq -r '.event')
-      data_str=$(echo "$line" | jq -c '.data // {}')
+      ts=$(jq -r '.ts' <<< "$line")
+      event=$(jq -r '.event' <<< "$line")
+      data_str=$(jq -c '.data // {}' <<< "$line")
       printf "  %s  %-20s %s\n" "$ts" "$event" "$data_str"
     done
   fi

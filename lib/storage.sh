@@ -24,7 +24,7 @@ cq_read_json() {
 cq_write_json() {
   local file="$1"
   local data="$2"
-  echo "$data" | jq '.' > "$file" 2>/dev/null || cq_die "Failed to write JSON: ${file}"
+  jq '.' <<< "$data" > "$file" 2>/dev/null || cq_die "Failed to write JSON: ${file}"
 }
 
 # --- Meta ---
@@ -45,7 +45,7 @@ cq_update_meta() {
   local ts
   ts=$(cq_now)
   # Apply jq filter with optional --arg pairs
-  meta=$(echo "$meta" | jq --arg updated_at "$ts" "$@" "(${filter}) | .updated_at = \$updated_at")
+  meta=$(jq --arg updated_at "$ts" "$@" "(${filter}) | .updated_at = \$updated_at" <<< "$meta")
   cq_write_json "${run_dir}/meta.json" "$meta"
 }
 
@@ -60,7 +60,7 @@ cq_ctx_get() {
   local run_id="$1" key="$2"
   local ctx
   ctx=$(cq_read_ctx "$run_id")
-  echo "$ctx" | jq -r --arg k "$key" '.[$k] // empty'
+  jq -r --arg k "$key" '.[$k] // empty' <<< "$ctx"
 }
 
 cq_ctx_set() {
@@ -69,7 +69,7 @@ cq_ctx_set() {
   run_dir=$(cq_run_dir "$run_id")
   local ctx
   ctx=$(cq_read_json "${run_dir}/ctx.json")
-  ctx=$(echo "$ctx" | jq --arg k "$key" --arg v "$value" '.[$k] = $v')
+  ctx=$(jq --arg k "$key" --arg v "$value" '.[$k] = $v' <<< "$ctx")
   cq_write_json "${run_dir}/ctx.json" "$ctx"
 }
 
@@ -89,35 +89,35 @@ cq_get_step() {
   local run_id="$1" step_id="$2"
   local steps
   steps=$(cq_read_steps "$run_id")
-  echo "$steps" | jq --arg id "$step_id" '.[] | select(.id == $id)'
+  jq --arg id "$step_id" '.[] | select(.id == $id)' <<< "$steps"
 }
 
 cq_step_index() {
   local run_id="$1" step_id="$2"
   local steps
   steps=$(cq_read_steps "$run_id")
-  echo "$steps" | jq --arg id "$step_id" 'to_entries[] | select(.value.id == $id) | .key'
+  jq --arg id "$step_id" 'to_entries[] | select(.value.id == $id) | .key' <<< "$steps"
 }
 
 cq_step_count() {
   local run_id="$1"
   local steps
   steps=$(cq_read_steps "$run_id")
-  echo "$steps" | jq 'length'
+  jq 'length' <<< "$steps"
 }
 
 cq_step_at_index() {
   local run_id="$1" index="$2"
   local steps
   steps=$(cq_read_steps "$run_id")
-  echo "$steps" | jq --argjson i "$index" '.[$i]'
+  jq --argjson i "$index" '.[$i]' <<< "$steps"
 }
 
 cq_step_ids() {
   local run_id="$1"
   local steps
   steps=$(cq_read_steps "$run_id")
-  echo "$steps" | jq -r '.[].id'
+  jq -r '.[].id' <<< "$steps"
 }
 
 # --- State ---
@@ -131,7 +131,7 @@ cq_step_state_get() {
   local run_id="$1" step_id="$2"
   local state
   state=$(cq_read_state "$run_id")
-  echo "$state" | jq --arg id "$step_id" '.[$id]'
+  jq --arg id "$step_id" '.[$id]' <<< "$state"
 }
 
 cq_step_state_set() {
@@ -141,7 +141,7 @@ cq_step_state_set() {
   run_dir=$(cq_run_dir "$run_id")
   local state
   state=$(cq_read_json "${run_dir}/state.json")
-  state=$(echo "$state" | jq --arg id "$step_id" "$@" '.[$id] |= ('"$filter"')')
+  state=$(jq --arg id "$step_id" "$@" '.[$id] |= ('"$filter"')' <<< "$state")
   cq_write_json "${run_dir}/state.json" "$state"
 }
 
@@ -152,8 +152,8 @@ cq_init_step_state() {
   run_dir=$(cq_run_dir "$run_id")
   local state
   state=$(cq_read_json "${run_dir}/state.json")
-  state=$(echo "$state" | jq --arg id "$step_id" \
-    '.[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null}')
+  state=$(jq --arg id "$step_id" \
+    '.[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null}' <<< "$state")
   cq_write_json "${run_dir}/state.json" "$state"
 }
 
@@ -172,7 +172,7 @@ cq_active_run_ids() {
   local run_id meta status
   for run_id in $(cq_run_ids); do
     meta=$(cq_read_meta "$run_id" 2>/dev/null) || continue
-    status=$(echo "$meta" | jq -r '.status')
+    status=$(jq -r '.status' <<< "$meta")
     case "$status" in
       running|queued|paused|gated) echo "$run_id" ;;
     esac
@@ -229,79 +229,79 @@ cq_list_workflows() {
 # Returns step ID or "end"
 cq_resolve_next() {
   local run_id="$1" step_id="$2" outcome="$3"
-  local step steps ctx_json
+  local step steps ctx_json result
 
   step=$(cq_get_step "$run_id" "$step_id")
   steps=$(cq_read_steps "$run_id")
   ctx_json=$(cq_read_ctx "$run_id")
 
-  # 1. Check outcome-specific routes
-  if [[ "$outcome" == "pass" ]]; then
-    local on_pass
-    on_pass=$(echo "$step" | jq -r '.on_pass // empty')
-    if [[ -n "$on_pass" ]]; then
-      echo "$on_pass"
-      return 0
-    fi
-  fi
-  if [[ "$outcome" == "fail" ]]; then
-    local on_fail
-    on_fail=$(echo "$step" | jq -r '.on_fail // empty')
-    if [[ -n "$on_fail" ]]; then
-      echo "$on_fail"
-      return 0
-    fi
-  fi
-  if [[ "$outcome" == "timeout" ]]; then
-    local on_timeout
-    on_timeout=$(echo "$step" | jq -r '.on_timeout // empty')
-    if [[ -n "$on_timeout" ]]; then
-      # on_timeout can be "fail", "skip", or a step_id
-      case "$on_timeout" in
-        fail) ;; # fall through to treat as fail
-        skip)
-          echo "$(cq_resolve_next "$run_id" "$step_id" "pass")"
-          return 0
-          ;;
-        *)
-          echo "$on_timeout"
-          return 0
-          ;;
-      esac
-    fi
-    # Default: treat timeout as fail
-    local on_fail_fallback
-    on_fail_fallback=$(echo "$step" | jq -r '.on_fail // empty')
-    if [[ -n "$on_fail_fallback" ]]; then
-      echo "$on_fail_fallback"
-      return 0
-    fi
-  fi
+  # Try each routing strategy in order
+  result=$(_resolve_outcome_route "$step" "$outcome" "$run_id" "$step_id") && { echo "$result"; return 0; }
+  result=$(_resolve_next_field "$step" "$ctx_json") && { echo "$result"; return 0; }
+  _resolve_implicit_next "$steps" "$step_id"
+}
 
-  # 2. Check 'next' field
+# Check outcome-specific routes (on_pass, on_fail, on_timeout)
+_resolve_outcome_route() {
+  local step="$1" outcome="$2" run_id="$3" step_id="$4"
+
+  case "$outcome" in
+    pass)
+      local on_pass
+      on_pass=$(jq -r '.on_pass // empty' <<< "$step")
+      [[ -n "$on_pass" ]] && { echo "$on_pass"; return 0; }
+      ;;
+    fail)
+      local on_fail
+      on_fail=$(jq -r '.on_fail // empty' <<< "$step")
+      [[ -n "$on_fail" ]] && { echo "$on_fail"; return 0; }
+      ;;
+    timeout)
+      local on_timeout
+      on_timeout=$(jq -r '.on_timeout // empty' <<< "$step")
+      if [[ -n "$on_timeout" ]]; then
+        case "$on_timeout" in
+          fail) ;; # fall through
+          skip) cq_resolve_next "$run_id" "$step_id" "pass"; return 0 ;;
+          *)    echo "$on_timeout"; return 0 ;;
+        esac
+      fi
+      # Default: treat timeout as fail
+      local on_fail_fallback
+      on_fail_fallback=$(jq -r '.on_fail // empty' <<< "$step")
+      [[ -n "$on_fail_fallback" ]] && { echo "$on_fail_fallback"; return 0; }
+      ;;
+  esac
+  return 1
+}
+
+# Check 'next' field (string or conditional array)
+_resolve_next_field() {
+  local step="$1" ctx_json="$2"
   local next_type
-  next_type=$(echo "$step" | jq -r '.next | type')
+  next_type=$(jq -r '.next | type' <<< "$step")
 
   if [[ "$next_type" == "array" ]]; then
-    # Conditional routing
-    local rules_count i when_clause goto_target interpolated
-    rules_count=$(echo "$step" | jq '.next | length')
+    # Conditional routing: evaluate each rule
+    local rules_count i
+    rules_count=$(jq '.next | length' <<< "$step")
     for ((i = 0; i < rules_count; i++)); do
       local rule
-      rule=$(echo "$step" | jq --argjson i "$i" '.next[$i]')
+      rule=$(jq --argjson i "$i" '.next[$i]' <<< "$step")
 
-      # Check for default rule
       local is_default
-      is_default=$(echo "$rule" | jq -r '.default // empty')
+      is_default=$(jq -r '.default // empty' <<< "$rule")
       if [[ -n "$is_default" ]]; then
         echo "$is_default"
         return 0
       fi
 
-      when_clause=$(echo "$rule" | jq -r '.when // empty')
-      goto_target=$(echo "$rule" | jq -r '.goto // empty')
+      local when_clause goto_target
+      when_clause=$(jq -r '.when // empty' <<< "$rule")
+      goto_target=$(jq -r '.goto // empty' <<< "$rule")
 
       if [[ -n "$when_clause" && -n "$goto_target" ]]; then
+        local interpolated
         interpolated=$(cq_interpolate "$when_clause" "$ctx_json")
         if cq_evaluate_condition "$interpolated"; then
           echo "$goto_target"
@@ -311,21 +311,22 @@ cq_resolve_next() {
     done
   elif [[ "$next_type" == "string" ]]; then
     local next_val
-    next_val=$(echo "$step" | jq -r '.next')
-    if [[ -n "$next_val" ]]; then
-      echo "$next_val"
-      return 0
-    fi
+    next_val=$(jq -r '.next' <<< "$step")
+    [[ -n "$next_val" ]] && { echo "$next_val"; return 0; }
   fi
+  return 1
+}
 
-  # 3. Implicit ordering: next step in array
+# Fallback: next step in array order
+_resolve_implicit_next() {
+  local steps="$1" step_id="$2"
   local index total
-  index=$(echo "$steps" | jq --arg id "$step_id" '[.[] | .id] | to_entries[] | select(.value == $id) | .key')
-  total=$(echo "$steps" | jq 'length')
+  index=$(jq --arg id "$step_id" '[.[] | .id] | to_entries[] | select(.value == $id) | .key' <<< "$steps")
+  total=$(jq 'length' <<< "$steps")
   local next_index=$((index + 1))
 
   if [[ $next_index -lt $total ]]; then
-    echo "$steps" | jq -r --argjson i "$next_index" '.[$i].id'
+    jq -r --argjson i "$next_index" '.[$i].id' <<< "$steps"
   else
     echo "end"
   fi
@@ -351,11 +352,11 @@ cq_create_todo() {
 
   local meta
   meta=$(cq_read_json "${run_dir}/meta.json")
-  priority=$(echo "$meta" | jq -r '.priority // "normal"')
+  priority=$(jq -r '.priority // "normal"' <<< "$meta")
 
   local step
   step=$(cq_get_step "$run_id" "$step_id")
-  step_name=$(echo "$step" | jq -r '.name // .id')
+  step_name=$(jq -r '.name // .id' <<< "$step")
 
   local todo_json
   todo_json=$(jq -cn \
@@ -388,7 +389,7 @@ cq_list_todos() {
   local filter_run="${1:-}"
   local run_id todo_file todo_json priority weight epoch_s score
 
-  local todos_json="[]"
+  local -a todo_items=()
 
   for run_id in $(cq_run_ids); do
     [[ -n "$filter_run" && "$run_id" != "$filter_run" ]] && continue
@@ -400,25 +401,26 @@ cq_list_todos() {
       [[ -f "$todo_file" ]] || continue
       todo_json=$(cat "$todo_file")
       local status
-      status=$(echo "$todo_json" | jq -r '.status')
+      status=$(jq -r '.status' <<< "$todo_json")
       [[ "$status" != "pending" ]] && continue
 
-      priority=$(echo "$todo_json" | jq -r '.priority // "normal"')
+      priority=$(jq -r '.priority // "normal"' <<< "$todo_json")
       weight=$(cq_priority_weight "$priority")
-      # Use created_at timestamp for scoring
       local created_at
-      created_at=$(echo "$todo_json" | jq -r '.created_at')
-      # Convert ISO to epoch for scoring
+      created_at=$(jq -r '.created_at' <<< "$todo_json")
       epoch_s=$(date -d "$created_at" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null || echo "0")
       score=$((weight * 1000000000000 + epoch_s))
 
-      todos_json=$(echo "$todos_json" | jq --argjson t "$todo_json" --argjson s "$score" \
-        '. + [($t + {score: $s})]')
+      todo_items+=("$(jq -c --argjson s "$score" '. + {score: $s}' <<< "$todo_json")")
     done
   done
 
   # Sort by score (ascending = highest priority first)
-  echo "$todos_json" | jq 'sort_by(.score)'
+  if [[ ${#todo_items[@]} -gt 0 ]]; then
+    printf '%s\n' "${todo_items[@]}" | jq -s 'sort_by(.score)'
+  else
+    echo "[]"
+  fi
 }
 
 # Resolve a pending TODO by its index (1-based)
@@ -427,7 +429,7 @@ cq_find_todo_by_index() {
   local todos
   todos=$(cq_list_todos)
   local zero_idx=$((index - 1))
-  echo "$todos" | jq --argjson i "$zero_idx" '.[$i] // empty'
+  jq --argjson i "$zero_idx" '.[$i] // empty' <<< "$todos"
 }
 
 cq_update_todo() {
@@ -437,6 +439,6 @@ cq_update_todo() {
   [[ -f "$todo_file" ]] || cq_die "TODO not found: ${todo_id}"
   local todo
   todo=$(cat "$todo_file")
-  todo=$(echo "$todo" | jq --arg s "$new_status" '.status = $s')
+  todo=$(jq --arg s "$new_status" '.status = $s' <<< "$todo")
   cq_write_json "$todo_file" "$todo"
 }

@@ -18,10 +18,8 @@ cmd_init() {
     # Install MCP config (added in v2.1.0)
     _install_mcp_config "$project_dir"
 
-    cq_info "Already initialized in ${project_dir}"
-    if [[ "$CQ_JSON" == "true" ]]; then
-      jq -cn --arg dir "$project_dir" '{status:"exists", directory:$dir}'
-    fi
+    cq_json_out --arg dir "$project_dir" '{status:"exists", directory:$dir}' || \
+      cq_info "Already initialized in ${project_dir}"
     return 0
   fi
 
@@ -55,10 +53,8 @@ cmd_init() {
   # Install MCP config
   _install_mcp_config "$project_dir"
 
-  cq_info "Initialized .claudekiq/ in ${project_dir}"
-  if [[ "$CQ_JSON" == "true" ]]; then
-    jq -cn --arg dir "$project_dir" '{status:"initialized", directory:$dir}'
-  fi
+  cq_json_out --arg dir "$project_dir" '{status:"initialized", directory:$dir}' || \
+    cq_info "Initialized .claudekiq/ in ${project_dir}"
 }
 
 _install_skill() {
@@ -124,11 +120,8 @@ MCP_EOF
 }
 
 cmd_version() {
-  if [[ "$CQ_JSON" == "true" ]]; then
-    jq -cn --arg v "$CQ_VERSION" '{version:$v}'
-  else
+  cq_json_out --arg v "$CQ_VERSION" '{version:$v}' || \
     echo "cq ${CQ_VERSION}"
-  fi
 }
 
 cmd_help() {

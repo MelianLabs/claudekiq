@@ -17,34 +17,42 @@ cmd_workflows_list() {
   local workflows
   workflows=$(cq_list_workflows)
 
-  if [[ "$CQ_JSON" == "true" ]]; then
-    local json="[]"
-    local name
-    while IFS= read -r name; do
-      [[ -z "$name" ]] && continue
-      local file desc=""
-      file=$(cq_find_workflow "$name") || continue
-      local wf_json
-      wf_json=$(cq_yaml_to_json "$file")
-      desc=$(echo "$wf_json" | jq -r '.description // ""')
-      json=$(echo "$json" | jq --arg n "$name" --arg d "$desc" '. + [{name:$n, description:$d}]')
-    done <<< "$workflows"
-    echo "$json" | jq '.'
-  else
-    if [[ -z "$workflows" ]]; then
+  if [[ -z "$workflows" ]]; then
+    if [[ "$CQ_JSON" == "true" ]]; then
+      echo '[]'
+    else
       echo "No workflows found."
-      return
     fi
-    local name
-    while IFS= read -r name; do
-      [[ -z "$name" ]] && continue
-      local file desc=""
-      file=$(cq_find_workflow "$name") || continue
-      local wf_json
-      wf_json=$(cq_yaml_to_json "$file")
-      desc=$(echo "$wf_json" | jq -r '.description // ""')
-      printf "  %-20s %s\n" "$name" "$desc"
-    done <<< "$workflows"
+    return
+  fi
+
+  # Read workflow data once, build both JSON and text from same data
+  local -a wf_items=()
+  local name
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    local file desc=""
+    file=$(cq_find_workflow "$name") || continue
+    local wf_json
+    wf_json=$(cq_yaml_to_json "$file")
+    desc=$(jq -r '.description // ""' <<< "$wf_json")
+    wf_items+=("$(jq -cn --arg n "$name" --arg d "$desc" '{name:$n, description:$d}')")
+  done <<< "$workflows"
+
+  local result_json
+  if [[ ${#wf_items[@]} -gt 0 ]]; then
+    result_json=$(printf '%s\n' "${wf_items[@]}" | jq -s '.')
+  else
+    result_json="[]"
+  fi
+
+  if [[ "$CQ_JSON" == "true" ]]; then
+    jq '.' <<< "$result_json"
+  else
+    jq -r '.[] | "\(.name)\t\(.description)"' <<< "$result_json" | \
+      while IFS=$'\t' read -r n d; do
+        printf "  %-20s %s\n" "$n" "$d"
+      done
   fi
 }
 
@@ -57,19 +65,19 @@ cmd_workflows_show() {
   wf_json=$(cq_yaml_to_json "$file")
 
   if [[ "$CQ_JSON" == "true" ]]; then
-    echo "$wf_json" | jq '.'
+    jq '.' <<< "$wf_json"
   else
     local wf_name desc default_priority
-    wf_name=$(echo "$wf_json" | jq -r '.name // ""')
-    desc=$(echo "$wf_json" | jq -r '.description // ""')
-    default_priority=$(echo "$wf_json" | jq -r '.default_priority // "normal"')
+    wf_name=$(jq -r '.name // ""' <<< "$wf_json")
+    desc=$(jq -r '.description // ""' <<< "$wf_json")
+    default_priority=$(jq -r '.default_priority // "normal"' <<< "$wf_json")
 
     echo "Workflow: ${wf_name:-$name}"
     [[ -n "$desc" ]] && echo "Description: $desc"
     echo "Priority: $default_priority"
     echo ""
     echo "Steps:"
-    echo "$wf_json" | jq -r '.steps[] | "  \(.id)\t\(.type)\t\(.name // "")\tgate=\(.gate // "auto")"'
+    jq -r '.steps[] | "  \(.id)\t\(.type)\t\(.name // "")\tgate=\(.gate // "auto")"' <<< "$wf_json"
   fi
 }
 
@@ -82,32 +90,31 @@ cmd_workflows_validate() {
 
   # Check required fields
   local wf_name
-  wf_name=$(echo "$wf_json" | jq -r '.name // empty')
+  wf_name=$(jq -r '.name // empty' <<< "$wf_json")
   [[ -z "$wf_name" ]] && errors+=("Missing 'name' field")
 
   # Check steps exist and are non-empty
   local step_count
-  step_count=$(echo "$wf_json" | jq '.steps | length')
+  step_count=$(jq '.steps | length' <<< "$wf_json")
   [[ "$step_count" -eq 0 ]] && errors+=("Steps must be non-empty")
 
-  # Validate each step
-  local i step_id step_type
-  for ((i = 0; i < step_count; i++)); do
-    step_id=$(echo "$wf_json" | jq -r --argjson i "$i" '.steps[$i].id // empty')
-    step_type=$(echo "$wf_json" | jq -r --argjson i "$i" '.steps[$i].type // empty')
-
-    [[ -z "$step_id" ]] && errors+=("Step $i: missing 'id'")
-    [[ -z "$step_type" ]] && errors+=("Step $i: missing 'type'")
-
-    # Validate ID format
-    if [[ -n "$step_id" && ! "$step_id" =~ ^[a-z0-9_-]+$ ]]; then
-      errors+=("Step '${step_id}': ID must match [a-z0-9_-]+")
-    fi
-  done
+  # Validate each step using a single jq call
+  local step_errors
+  step_errors=$(jq -r '
+    .steps | to_entries[] |
+    (if .value.id == null or .value.id == "" then "Step \(.key): missing '\''id'\''" else empty end),
+    (if .value.type == null or .value.type == "" then "Step \(.key): missing '\''type'\''" else empty end),
+    (if .value.id != null and .value.id != "" and (.value.id | test("^[a-z0-9_-]+$") | not) then
+      "Step '\''\(.value.id)'\'': ID must match [a-z0-9_-]+"
+    else empty end)
+  ' <<< "$wf_json" 2>/dev/null)
+  while IFS= read -r err; do
+    [[ -n "$err" ]] && errors+=("$err")
+  done <<< "$step_errors"
 
   # Check for duplicate step IDs
   local dupes
-  dupes=$(echo "$wf_json" | jq -r '[.steps[].id] | group_by(.) | map(select(length > 1)) | .[0][0] // empty')
+  dupes=$(jq -r '[.steps[].id] | group_by(.) | map(select(length > 1)) | .[0][0] // empty' <<< "$wf_json")
   [[ -n "$dupes" ]] && errors+=("Duplicate step ID: ${dupes}")
 
   if [[ ${#errors[@]} -gt 0 ]]; then
@@ -120,9 +127,5 @@ cmd_workflows_validate() {
     return 1
   fi
 
-  if [[ "$CQ_JSON" == "true" ]]; then
-    jq -cn '{valid:true, errors:[]}'
-  else
-    echo "Valid: ${file}"
-  fi
+  cq_json_out '{valid:true, errors:[]}' || echo "Valid: ${file}"
 }

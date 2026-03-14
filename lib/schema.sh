@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # schema.sh — AI-discoverable command schemas
 
+# Single source of truth for MCP-exposed commands (used by mcp.sh too)
+cq_command_list() {
+  echo "start status list log pause resume cancel retry step-done skip todos todo ctx add-step add-steps set-next workflows heartbeat check-stale cleanup workers"
+}
+
 cmd_schema() {
   local command="${1:-}"
 
   if [[ -z "$command" ]]; then
-    # List all commands
-    cat <<'JSON'
-["start","status","list","log","pause","resume","cancel","retry","step-done","skip","todos","todo","ctx","add-step","add-steps","set-next","workflows","config","init","version","help","schema","cleanup","heartbeat","check-stale","mcp","workers"]
-JSON
+    # List all commands (MCP + meta commands)
+    local mcp_cmds
+    mcp_cmds=$(cq_command_list)
+    local all_cmds="$mcp_cmds config init version help schema mcp"
+    # Output as JSON array
+    echo "$all_cmds" | tr ' ' '\n' | jq -Rcs 'split("\n") | map(select(. != ""))'
     return
   fi
 
