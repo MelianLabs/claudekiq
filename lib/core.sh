@@ -208,7 +208,7 @@ cq_default_config() {
     "queued": "📋", "paused": "⏯️", "cancelled": "🚫",
     "completed": "✅", "blocked": "⏳"
   },
-  "step_fields": ["name", "type", "target", "args_template", "gate"],
+  "step_fields": ["name", "type", "target", "args_template", "gate", "model", "background"],
   "edge_keys": ["next", "on_pass", "on_fail"],
   "notifications": {
     "on_gate": null,

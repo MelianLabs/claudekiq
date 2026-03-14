@@ -196,7 +196,7 @@ Configuration:
   config set --global <key> <value> Set global config value
 
 Setup:
-  init                              Initialize .claudekiq/ in current project
+  init [--mcp]                      Initialize .claudekiq/ in current project
   version                           Show version
   help [command]                    Show help
   schema [command]                  Show command schema (JSON)
@@ -231,7 +231,7 @@ _help_for_command() {
     set-next)  echo "Usage: cq set-next <run_id> <step_id> <target>" ;;
     workflows) echo "Usage: cq workflows list|show|validate" ;;
     config)    echo "Usage: cq config | cq config get <key> | cq config set [--global] <key> <value>" ;;
-    init)    echo "Usage: cq init" ;;
+    init)    echo "Usage: cq init [--mcp]" ;;
     schema)  echo "Usage: cq schema [command]" ;;
     cleanup) echo "Usage: cq cleanup" ;;
     *)       echo "Unknown command: $cmd. Run 'cq help' for usage." ;;

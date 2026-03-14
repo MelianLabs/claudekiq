@@ -299,10 +299,12 @@ JSON
 {
   "command": "init",
   "description": "Initialize .claudekiq/ in the current project",
-  "usage": "cq init",
-  "parameters": [],
-  "flags": ["--json"],
-  "examples": ["cq init"]
+  "usage": "cq init [--mcp]",
+  "parameters": [
+    {"name": "--mcp", "type": "boolean", "required": false, "description": "Also install MCP server config into .mcp.json"}
+  ],
+  "flags": ["--json", "--mcp"],
+  "examples": ["cq init", "cq init --mcp"]
 }
 JSON
       ;;

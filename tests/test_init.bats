@@ -75,6 +75,28 @@ teardown() {
   echo "$output" | jq -e '.status == "initialized"'
 }
 
+@test "init does not create .mcp.json by default" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  [ ! -f .mcp.json ]
+}
+
+@test "init --mcp creates .mcp.json" {
+  cd "$TEST_DIR"
+  "$CQ" init --mcp >/dev/null
+  [ -f .mcp.json ]
+  jq -e '.mcpServers.cq' .mcp.json
+}
+
+@test "init --mcp on re-run adds MCP config" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  [ ! -f .mcp.json ]
+  "$CQ" init --mcp >/dev/null
+  [ -f .mcp.json ]
+  jq -e '.mcpServers.cq' .mcp.json
+}
+
 @test "version shows version" {
   run "$CQ" version
   [ "$status" -eq 0 ]

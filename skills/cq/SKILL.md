@@ -129,25 +129,21 @@ Find the step definition in `steps` where `id == meta.current_step`. Extract:
 - `gate` — what happens after (auto, human, review)
 - `description` — for manual steps
 - `outputs` — what to extract from results
+- `model` — optional: which Claude model to use (haiku, sonnet, opus)
+- `background` — optional: whether to run in background (default: false)
 
 ### Step 5: Interpolate Variables
 Replace all `{{variable}}` references in `target` and `args_template` with values from `ctx`. Use the context JSON to resolve them.
 
-### Step 5.5: Track Progress with Tasks
+### Step 5.5: Track Progress
 
-Before executing the step, create a Claude Code Task for progress tracking and write a heartbeat:
+Create a Claude Code Task for this step:
 
-1. **Create a Task** using `TaskCreate`:
-   - `name`: `"cq: <workflow> step <current>/<total> — <step_name>"`
-   - `description`: `"Executing step <step_id> of workflow <template>"`
-   - Save the returned `task_id` for later update
+Use TaskCreate:
+  - name: `"cq: <workflow> step <current>/<total> — <step_name>"`
+  - description: `"Executing step <step_id> (type: <type>) of workflow <template>"`
 
-2. **Write heartbeat** (still needed for `check-stale` backward compat):
-```bash
-cq heartbeat <run_id>
-```
-
-This replaces the background heartbeat loop. Claude Code's task system provides built-in progress tracking visible in the status bar, and each step becomes a trackable task with metrics.
+Save the returned `task_id` for Step 7.
 
 ### Step 6: Execute Step
 
@@ -160,11 +156,69 @@ Run the interpolated `target` as a shell command using the Bash tool.
 - Capture stdout as the result
 
 #### `agent`
-The `args_template` (interpolated) is your task prompt. Execute it as an AI task:
-- Do the work described in the interpolated args_template
-- When done, the outcome is `pass`
-- If you cannot complete the task, the outcome is `fail`
-- The `target` field (e.g. `@rails-dev`) is informational context about the intended agent role
+Use the **Agent tool** to spawn a specialized agent:
+
+1. **Determine subagent_type** from `target`:
+   - If `target` is empty or doesn't start with `@`, execute inline as before (backward compat): do the work described in args_template yourself
+   - Strip the `@` prefix (e.g., `@code-review` → `code-review`)
+   - Look up the target in the mapping table below. If no match, use `general-purpose`
+
+2. **Invoke the Agent tool:**
+   - `description`: step name (max 5 words)
+   - `subagent_type`: resolved from target (or `general-purpose`)
+   - `model`: from the step's `model` field (if present)
+   - `prompt`: the interpolated `args_template`
+   - `run_in_background`: `true` if the step has `background: true` (see Background Execution below)
+
+3. **Interpret results:**
+   - Agent returns successfully → outcome is `pass`
+   - Agent returns with error or cannot complete → outcome is `fail`
+   - Extract result JSON from the agent's response for `outputs` processing
+
+##### Target → subagent_type mapping
+
+| Target | subagent_type |
+|--------|--------------|
+| `@rails-test` | `rails-test` |
+| `@rails-lint` | `rails-lint` |
+| `@webpack-test` | `webpack-test` |
+| `@webpack-lint` | `webpack-lint` |
+| `@code-review` | `code-reviewer` |
+| `@security-reviewer` | `security-reviewer` |
+| `@performance-reviewer` | `performance-reviewer` |
+| `@design-patterns-reviewer` | `design-patterns-reviewer` |
+| `@lt-story` | `lt-story` |
+| `@lt-branch` | `lt-branch` |
+| `@sentry-investigator` | `sentry-investigator` |
+| `@helpcenter` | `helpcenter` |
+| `@scheduler-v2-test` | `scheduler-v2-test` |
+| `@scheduler-v2-feature` | `scheduler-v2-feature` |
+| `@pos-v2-test` | `pos-v2-test` |
+| `@pos-v2-feature` | `pos-v2-feature` |
+| `@pos-v2-lint` | `pos-v2-lint` |
+| `@marketplace-test` | `marketplace-test` |
+| `@marketplace-lint` | `marketplace-lint` |
+| `@marketplace-feature` | `marketplace-feature` |
+| `@chat-widget-test` | `chat-widget-test` |
+| `@chat-widget-lint` | `chat-widget-lint` |
+| `@chat-widget-feature` | `chat-widget-feature` |
+| `@rails-feature` | `rails-feature` |
+| `@webpack-feature` | `webpack-feature` |
+| (anything else with `@`) | `general-purpose` |
+
+##### Background execution
+
+If the step has `background: true`:
+1. Add `run_in_background: true` to the Agent tool call
+2. Do NOT wait for the result — immediately proceed to the next step
+3. When a later step references an output from this background step (via `{{var}}`), the runner must wait for the background agent's completion notification before proceeding
+4. After the background agent completes, mark the step done: `cq step-done <run_id> <step_id> pass|fail [result_json]`
+
+If the step has `timeout` AND is NOT `background: true`, the runner should implicitly treat it as background so it can enforce the timeout:
+1. Launch the agent with `run_in_background: true`
+2. Track elapsed time
+3. If the agent hasn't completed within `timeout` seconds, treat as timeout outcome (route via `on_timeout`)
+4. If the agent completes within the timeout, proceed normally
 
 #### `skill`
 The `target` contains a skill name (e.g. `/review`). Invoke it:
@@ -186,27 +240,49 @@ Then mark the current step as pass and continue.
 
 #### `for_each`
 Iterate over a delimited list, executing a sub-step for each item:
-- Read `over` (interpolated) — the list to iterate over (e.g., `"rails,webpack,marketplace"`)
-- Read `delimiter` (default `","`) — how to split the list
-- Read `item_var` — the variable name to set in context for each iteration
-- Read `max_iterations` (default `100`) — safety limit
-- Read `step` — the sub-step definition to execute per item
-- For each item in the split list:
-  1. Set the item_var in context: `cq ctx set <run_id> <item_var> <item>`
-  2. Execute the sub-step as if it were the current step (interpolate, execute by type, check outcome)
-  3. If the sub-step fails and gate is not `auto`, handle accordingly
-- After all iterations complete, the outcome is `pass` if ALL iterations passed, `fail` if any failed
-- Track iteration progress: "for_each 2/3: testing webpack"
+
+1. Read fields:
+   - `over` (interpolated) — the list string (e.g., `"rails,webpack,marketplace"`)
+   - `delimiter` (default `","`) — split character
+   - `item_var` — context variable name to set per iteration
+   - `max_iterations` (default `100`) — safety limit
+   - `step` — the sub-step definition
+
+2. Split `over` by `delimiter` into items array
+
+3. For each item (up to `max_iterations`):
+   a. Set the context variable: `cq ctx set <run_id> <item_var> <item>`
+   b. Determine how to execute the sub-step based on its `type`:
+      - If `agent`: use the Agent tool (same rules as the `agent` type above)
+      - If `bash`: use the Bash tool
+      - If `skill`: use the Skill tool
+   c. Track progress: "for_each 2/3: processing webpack"
+   d. If sub-step fails and this for_each has no `on_fail`, stop iteration
+
+4. Outcome: `pass` if ALL iterations pass, `fail` if any fails
+5. Mark done: `cq step-done <run_id> <for_each_step_id> pass|fail`
 
 #### `parallel`
-Execute multiple sub-steps concurrently:
-- Read `steps` — array of sub-step definitions
-- Read `fail_strategy` (default `"wait_all"`) — `"wait_all"` waits for all children before determining outcome, `"fail_fast"` cancels remaining children when one fails
-- Launch ALL child steps simultaneously using parallel Agent tool calls (with `run_in_background: true` for background execution)
-- Monitor completion of all children
-- Outcome: `pass` if ALL children pass, `fail` if any child fails
-- Each child step's outputs are merged into the parent context
-- Track parallel progress: "parallel 2/3 done: ✅ run-tests, 🔄 run-lint, ⬚ code-review"
+Execute multiple sub-steps concurrently using the Agent tool:
+
+1. Read `steps` array and `fail_strategy` (default: `wait_all`)
+2. For EACH child step, invoke the Agent tool in a SINGLE message:
+   - `description`: "parallel: <child_step_name>"
+   - `subagent_type`: resolved from child's `target` (same mapping as agent steps)
+   - `model`: from child's `model` field (if present)
+   - `run_in_background: true`
+   - `prompt`: interpolated child's `args_template`
+
+3. ALL Agent tool calls go in ONE message (Claude Code runs them concurrently)
+
+4. Wait for all background agents to complete (you'll be notified as each finishes)
+
+5. Collect results:
+   - Extract outputs from each child's result into context
+   - Outcome: `pass` if ALL children pass, `fail` if any child fails
+   - For `fail_fast`: if a child fails, note remaining children as skipped
+
+6. Mark the parent parallel step done: `cq step-done <run_id> <parallel_step_id> pass|fail`
 
 #### `batch`
 Spawn multiple isolated worker agents, each processing one item from a list:
@@ -240,7 +316,6 @@ After marking the step complete:
 1. **Update the Task** created in Step 5.5 using `TaskUpdate`:
    - Set status to `completed` (if pass) or `failed` (if fail)
    - Include a brief result summary
-2. **Refresh heartbeat**: `cq heartbeat <run_id>`
 
 ### Step 8: Handle Post-Step State
 Re-read status: `cq status <run_id> --json`
@@ -273,7 +348,8 @@ Go back to **Step 1**.
 - Always use `--json` flag when reading cq state (parsing is more reliable)
 - Never modify run files directly — always use `cq` commands
 - The `cq` CLI handles all routing, gate logic, and state transitions — trust it
-- For agent steps, YOU are the agent — do the work described in args_template
+- For agent steps with a `@target`, use the Agent tool to spawn a subagent — do NOT do the work inline
+- For agent steps WITHOUT a `@target`, YOU are the agent — do the work described in args_template
 - For bash steps, run exactly the interpolated command — don't modify it
 - If the user wants to pause, run: `cq pause <run_id>`
 - If the user wants to cancel, run: `cq cancel <run_id>`

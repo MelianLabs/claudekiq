@@ -110,7 +110,7 @@ Uninstall: `rm -rf ~/.cq` and remove the PATH entry.
   },
 
   // Step fields recognized in workflow YAML
-  "step_fields": ["name", "type", "target", "args_template", "gate"],
+  "step_fields": ["name", "type", "target", "args_template", "gate", "model", "background"],
 
   // Edge keys for routing
   "edge_keys": ["next", "on_pass", "on_fail"],
