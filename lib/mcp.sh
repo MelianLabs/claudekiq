@@ -96,11 +96,7 @@ _mcp_build_tools() {
       '{name:$name, description:$desc, inputSchema:$schema}')")
   done
 
-  if [[ ${#tool_items[@]} -gt 0 ]]; then
-    printf '%s\n' "${tool_items[@]}" | jq -s '.'
-  else
-    echo "[]"
-  fi
+  cq_json_array ${tool_items[@]+"${tool_items[@]}"}
 }
 
 # Handle tools/list request

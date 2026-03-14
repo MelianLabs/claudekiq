@@ -32,6 +32,16 @@ cq_trim() {
   echo "$var"
 }
 
+# Convert a bash array of JSON objects to a JSON array
+# Usage: cq_json_array "${items[@]}"
+cq_json_array() {
+  if [[ $# -gt 0 ]]; then
+    printf '%s\n' "$@" | jq -s '.'
+  else
+    echo "[]"
+  fi
+}
+
 # --- ID and time ---
 
 cq_gen_id() {

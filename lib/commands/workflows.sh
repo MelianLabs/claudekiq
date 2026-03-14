@@ -40,11 +40,7 @@ cmd_workflows_list() {
   done <<< "$workflows"
 
   local result_json
-  if [[ ${#wf_items[@]} -gt 0 ]]; then
-    result_json=$(printf '%s\n' "${wf_items[@]}" | jq -s '.')
-  else
-    result_json="[]"
-  fi
+  result_json=$(cq_json_array ${wf_items[@]+"${wf_items[@]}"})
 
   if [[ "$CQ_JSON" == "true" ]]; then
     jq '.' <<< "$result_json"

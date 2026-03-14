@@ -400,14 +400,14 @@ cq_list_todos() {
     for todo_file in "$todo_dir"/*.json; do
       [[ -f "$todo_file" ]] || continue
       todo_json=$(cat "$todo_file")
-      local status
-      status=$(jq -r '.status' <<< "$todo_json")
+
+      # Extract status, priority, and created_at in a single jq call
+      local fields
+      fields=$(jq -r '[.status, (.priority // "normal"), .created_at] | @tsv' <<< "$todo_json")
+      IFS=$'\t' read -r status priority created_at <<< "$fields"
       [[ "$status" != "pending" ]] && continue
 
-      priority=$(jq -r '.priority // "normal"' <<< "$todo_json")
       weight=$(cq_priority_weight "$priority")
-      local created_at
-      created_at=$(jq -r '.created_at' <<< "$todo_json")
       epoch_s=$(date -d "$created_at" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null || echo "0")
       score=$((weight * 1000000000000 + epoch_s))
 
@@ -416,11 +416,7 @@ cq_list_todos() {
   done
 
   # Sort by score (ascending = highest priority first)
-  if [[ ${#todo_items[@]} -gt 0 ]]; then
-    printf '%s\n' "${todo_items[@]}" | jq -s 'sort_by(.score)'
-  else
-    echo "[]"
-  fi
+  cq_json_array ${todo_items[@]+"${todo_items[@]}"} | jq 'sort_by(.score)'
 }
 
 # Resolve a pending TODO by its index (1-based)

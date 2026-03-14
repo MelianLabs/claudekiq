@@ -21,8 +21,8 @@ cmd_init() {
 
   if [[ -d "${project_dir}/.claudekiq" ]]; then
     # Already initialized — still update skills and gitignore in case of upgrades
-    _install_skill "$project_dir"
-    _install_workers_skill "$project_dir"
+    _install_skill "$project_dir" "cq"
+    _install_skill "$project_dir" "cq-workers"
 
     # Ensure .gitignore has workers entry (added in v2.0.0)
     local gitignore="${project_dir}/.gitignore"
@@ -64,8 +64,8 @@ cmd_init() {
   } >> "$gitignore"
 
   # Install Claude Code skills (/cq and /cq-workers)
-  _install_skill "$project_dir"
-  _install_workers_skill "$project_dir"
+  _install_skill "$project_dir" "cq"
+  _install_skill "$project_dir" "cq-workers"
 
   # Install MCP config only if explicitly requested
   if $install_mcp; then
@@ -77,37 +77,20 @@ cmd_init() {
 }
 
 _install_skill() {
-  local project_dir="$1"
-  local skill_dir="${project_dir}/.claude/skills/cq"
+  local project_dir="$1" skill_name="$2"
+  local skill_dir="${project_dir}/.claude/skills/${skill_name}"
   mkdir -p "$skill_dir"
 
   # Try to copy from the cq installation directory first
-  local src="${CQ_SCRIPT_DIR}/skills/cq/SKILL.md"
+  local src="${CQ_SCRIPT_DIR}/skills/${skill_name}/SKILL.md"
   # When installed to ~/.cq/bin/, skills are at ~/.cq/skills/
-  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq/SKILL.md"
+  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/${skill_name}/SKILL.md"
   if [[ -f "$src" ]]; then
     cp "$src" "${skill_dir}/SKILL.md"
     return
   fi
 
-  cq_die "Cannot find skills/cq/SKILL.md — please reinstall cq"
-}
-
-_install_workers_skill() {
-  local project_dir="$1"
-  local skill_dir="${project_dir}/.claude/skills/cq-workers"
-  mkdir -p "$skill_dir"
-
-  # Try to copy from the cq installation directory first
-  local src="${CQ_SCRIPT_DIR}/skills/cq-workers/SKILL.md"
-  # When installed to ~/.cq/bin/, skills are at ~/.cq/skills/
-  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq-workers/SKILL.md"
-  if [[ -f "$src" ]]; then
-    cp "$src" "${skill_dir}/SKILL.md"
-    return
-  fi
-
-  cq_die "Cannot find skills/cq-workers/SKILL.md — please reinstall cq"
+  cq_die "Cannot find skills/${skill_name}/SKILL.md — please reinstall cq"
 }
 
 _install_mcp_config() {

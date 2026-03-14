@@ -132,7 +132,9 @@ _count_running_runs() {
   local run_id
   for run_id in $(cq_run_ids); do
     local status
-    status=$(jq -r '.status' "$(cq_run_dir "$run_id")/meta.json" 2>/dev/null)
+    local meta
+    meta=$(cq_read_meta "$run_id" 2>/dev/null) || continue
+    status=$(jq -r '.status' <<< "$meta")
     [[ "$status" == "running" ]] && count=$((count + 1))
   done
   echo "$count"
@@ -165,7 +167,8 @@ _status_dashboard() {
   for run_id in "${all_runs[@]}"; do
     local meta
     meta=$(cq_read_meta "$run_id" 2>/dev/null) || continue
-    local run_dir="${CQ_PROJECT_ROOT}/.claudekiq/runs/${run_id}"
+    local run_dir
+    run_dir=$(cq_run_dir "$run_id")
     local hb_file="${run_dir}/.heartbeat"
     if [[ -f "$hb_file" ]]; then
       local hb_age
@@ -176,11 +179,7 @@ _status_dashboard() {
   done
 
   local runs_json
-  if [[ ${#run_metas[@]} -gt 0 ]]; then
-    runs_json=$(printf '%s\n' "${run_metas[@]}" | jq -s '.')
-  else
-    runs_json="[]"
-  fi
+  runs_json=$(cq_json_array ${run_metas[@]+"${run_metas[@]}"})
 
   if [[ "$CQ_JSON" == "true" ]]; then
     local todos
@@ -268,11 +267,7 @@ cmd_list() {
   done
 
   local runs_json
-  if [[ ${#run_items[@]} -gt 0 ]]; then
-    runs_json=$(printf '%s\n' "${run_items[@]}" | jq -s '.')
-  else
-    runs_json="[]"
-  fi
+  runs_json=$(cq_json_array ${run_items[@]+"${run_items[@]}"})
 
   if [[ "$CQ_JSON" == "true" ]]; then
     jq '.' <<< "$runs_json"
@@ -316,17 +311,10 @@ cmd_log() {
       jq -s '.' "$log_file"
     fi
   else
-    local line
     if [[ -n "$tail_n" ]]; then
       tail -n "$tail_n" "$log_file"
     else
       cat "$log_file"
-    fi | while IFS= read -r line; do
-      local ts event data_str
-      ts=$(jq -r '.ts' <<< "$line")
-      event=$(jq -r '.event' <<< "$line")
-      data_str=$(jq -c '.data // {}' <<< "$line")
-      printf "  %s  %-20s %s\n" "$ts" "$event" "$data_str"
-    done
+    fi | jq -r '[.ts, .event, (.data // {} | tojson)] | "  \(.[0])  \(.[1] + " " * (20 - (.[1] | length) | if . < 0 then 0 else . end)) \(.[2])"'
   fi
 }

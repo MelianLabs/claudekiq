@@ -74,33 +74,23 @@ _workers_status() {
   done
 
   local jobs_json
-  if [[ ${#job_items[@]} -gt 0 ]]; then
-    jobs_json=$(printf '%s\n' "${job_items[@]}" | jq -s '.')
-  else
-    jobs_json="[]"
-  fi
-
-  # Aggregate counts
-  local running gated completed failed total
-  running=$(jq '[.[] | select(.status=="running")] | length' <<< "$jobs_json")
-  gated=$(jq '[.[] | select(.status=="gated")] | length' <<< "$jobs_json")
-  completed=$(jq '[.[] | select(.status=="completed")] | length' <<< "$jobs_json")
-  failed=$(jq '[.[] | select(.status=="failed")] | length' <<< "$jobs_json")
-  total=$(jq 'length' <<< "$jobs_json")
+  jobs_json=$(cq_json_array ${job_items[@]+"${job_items[@]}"})
 
   if [[ "$CQ_JSON" == "true" ]]; then
-    jq -cn \
-      --arg sid "$session_id" \
-      --argjson jobs "$jobs_json" \
-      --argjson running "$running" \
-      --argjson gated "$gated" \
-      --argjson completed "$completed" \
-      --argjson failed "$failed" \
-      --argjson total "$total" \
-      '{session_id:$sid, total:$total, running:$running, gated:$gated, completed:$completed, failed:$failed, jobs:$jobs}'
+    jq -cn --arg sid "$session_id" --argjson jobs "$jobs_json" \
+      '{session_id:$sid} + ($jobs | {
+        total: length,
+        running: [.[] | select(.status=="running")] | length,
+        gated: [.[] | select(.status=="gated")] | length,
+        completed: [.[] | select(.status=="completed")] | length,
+        failed: [.[] | select(.status=="failed")] | length,
+        jobs: .
+      })'
   else
-    echo "Session: ${session_id} — ${total} workers (${running} running, ${gated} gated, ${completed} completed, ${failed} failed)"
-    jq -r '.[] | "  [\(.job_id)] \(.status) — step: \(.step // "n/a")"' <<< "$jobs_json"
+    jq -r --arg sid "$session_id" '
+      "Session: \($sid) — \(length) workers (\([.[] | select(.status=="running")] | length) running, \([.[] | select(.status=="gated")] | length) gated, \([.[] | select(.status=="completed")] | length) completed, \([.[] | select(.status=="failed")] | length) failed)",
+      (.[] | "  [\(.job_id)] \(.status) — step: \(.step // "n/a")")
+    ' <<< "$jobs_json"
   fi
 }
 

@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 # dynamic.sh — Dynamic modification: add-step, add-steps, set-next
 
+# Insert new_steps_json (array) into steps_json after after_step_id, or append if empty
+_insert_steps() {
+  local steps_json="$1" new_steps_json="$2" after_step_id="$3"
+  if [[ -n "$after_step_id" ]]; then
+    local index
+    index=$(cq_step_index "$run_id" "$after_step_id" 2>/dev/null)
+    # Fallback: compute index directly from the steps array
+    [[ -z "$index" ]] && index=$(jq --arg id "$after_step_id" \
+      'to_entries[] | select(.value.id == $id) | .key' <<< "$steps_json")
+    [[ -z "$index" ]] && cq_die "Step not found: ${after_step_id}"
+    local insert_at=$((index + 1))
+    jq --argjson i "$insert_at" --argjson s "$new_steps_json" \
+      '.[:$i] + $s + .[$i:]' <<< "$steps_json"
+  else
+    jq --argjson s "$new_steps_json" '. + $s' <<< "$steps_json"
+  fi
+}
+
 cmd_add_step() {
   local run_id="" step_json="" after_step=""
 
@@ -44,19 +62,7 @@ _add_step_locked() {
   local steps
   steps=$(cq_read_steps "$run_id")
 
-  if [[ -n "$after_step" ]]; then
-    # Insert after the specified step
-    local index
-    index=$(jq --arg id "$after_step" '[.[] | .id] | to_entries[] | select(.value == $id) | .key' <<< "$steps")
-    [[ -z "$index" ]] && cq_die "Step not found: ${after_step}"
-    local insert_at=$((index + 1))
-    steps=$(jq --argjson i "$insert_at" --argjson s "$step_json" \
-      '.[:$i] + [$s] + .[$i:]' <<< "$steps")
-  else
-    # Append to end
-    steps=$(jq --argjson s "$step_json" '. + [$s]' <<< "$steps")
-  fi
-
+  steps=$(_insert_steps "$steps" "[$step_json]" "$after_step")
   cq_write_steps "$run_id" "$steps"
 
   # Initialize state for new step
@@ -127,24 +133,17 @@ _add_steps_locked() {
   local steps
   steps=$(cq_read_steps "$run_id")
 
-  if [[ -n "$after_step" ]]; then
-    local index
-    index=$(jq --arg id "$after_step" '[.[] | .id] | to_entries[] | select(.value == $id) | .key' <<< "$steps")
-    [[ -z "$index" ]] && cq_die "Step not found: ${after_step}"
-    local insert_at=$((index + 1))
-    steps=$(jq --argjson i "$insert_at" --argjson s "$sub_steps" \
-      '.[:$i] + $s + .[$i:]' <<< "$steps")
-  else
-    steps=$(jq --argjson s "$sub_steps" '. + $s' <<< "$steps")
-  fi
+  steps=$(_insert_steps "$steps" "$sub_steps" "$after_step")
 
   cq_write_steps "$run_id" "$steps"
 
-  # Initialize state for all new steps
-  local sid
-  for sid in $(jq -r '.[].id' <<< "$sub_steps"); do
-    cq_init_step_state "$run_id" "$sid"
-  done
+  # Initialize state for all new steps in a single read-modify-write
+  local state
+  state=$(cq_read_state "$run_id")
+  state=$(jq --argjson subs "$sub_steps" '
+    reduce ($subs[].id) as $id (.; .[$id] = {status:"pending",visits:0,attempt:0,result:null,started_at:null,finished_at:null})
+  ' <<< "$state")
+  cq_write_json "${run_dir}/state.json" "$state"
 
   cq_log_event "$run_dir" "steps_added" \
     "$(jq -cn --arg flow "$flow_template" --arg after "${after_step:-end}" '{flow:$flow, after:$after}')"
