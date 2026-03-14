@@ -29,7 +29,22 @@ _source_lib() {
 _source_lib "core.sh"
 _source_lib "yaml.sh"
 _source_lib "storage.sh"
-_source_lib "commands.sh"
+
+# Source command modules (split from monolithic commands.sh)
+for _cq_cmd_file in "${CQ_SCRIPT_DIR}/lib/commands/"*.sh; do
+  if [[ -f "$_cq_cmd_file" ]]; then
+    # shellcheck source=/dev/null
+    source "$_cq_cmd_file"
+  fi
+done
+# Fallback: try ~/.cq/lib/commands/ if script dir doesn't have them
+if [[ ! -d "${CQ_SCRIPT_DIR}/lib/commands" || -z "$(ls "${CQ_SCRIPT_DIR}/lib/commands/"*.sh 2>/dev/null)" ]]; then
+  for _cq_cmd_file in "${HOME}/.cq/lib/commands/"*.sh; do
+    [[ -f "$_cq_cmd_file" ]] && source "$_cq_cmd_file"
+  done
+fi
+unset _cq_cmd_file
+
 _source_lib "schema.sh"
 
 # --- Check dependencies ---

@@ -252,6 +252,31 @@ cq_resolve_next() {
       return 0
     fi
   fi
+  if [[ "$outcome" == "timeout" ]]; then
+    local on_timeout
+    on_timeout=$(echo "$step" | jq -r '.on_timeout // empty')
+    if [[ -n "$on_timeout" ]]; then
+      # on_timeout can be "fail", "skip", or a step_id
+      case "$on_timeout" in
+        fail) ;; # fall through to treat as fail
+        skip)
+          echo "$(cq_resolve_next "$run_id" "$step_id" "pass")"
+          return 0
+          ;;
+        *)
+          echo "$on_timeout"
+          return 0
+          ;;
+      esac
+    fi
+    # Default: treat timeout as fail
+    local on_fail_fallback
+    on_fail_fallback=$(echo "$step" | jq -r '.on_fail // empty')
+    if [[ -n "$on_fail_fallback" ]]; then
+      echo "$on_fail_fallback"
+      return 0
+    fi
+  fi
 
   # 2. Check 'next' field
   local next_type

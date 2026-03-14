@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # setup.bash — Shared test helpers for cq BATS tests
 
-CQ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/cq"
+CQ_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CQ="${CQ_ROOT}/cq"
 FIXTURES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures"
 
 setup_test_project() {

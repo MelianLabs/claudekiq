@@ -1,0 +1,38 @@
+name: with-timeout
+description: Workflow with step timeouts
+
+steps:
+  - id: fast-step
+    name: Fast Step
+    type: bash
+    target: "echo fast"
+    timeout: 30
+    gate: auto
+
+  - id: slow-step
+    name: Slow Step
+    type: bash
+    target: "sleep 10"
+    timeout: 5
+    on_timeout: skip
+    gate: auto
+
+  - id: timeout-to-step
+    name: Timeout to Step
+    type: bash
+    target: "sleep 10"
+    timeout: 5
+    on_timeout: fallback
+    gate: auto
+
+  - id: fallback
+    name: Fallback
+    type: bash
+    target: "echo fallback"
+    gate: auto
+
+  - id: done
+    name: Done
+    type: bash
+    target: "echo done"
+    gate: auto

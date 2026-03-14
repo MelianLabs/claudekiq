@@ -1,0 +1,32 @@
+name: with-parallel
+description: Workflow with parallel step group
+
+steps:
+  - id: prepare
+    name: Prepare
+    type: bash
+    target: "echo prepare"
+    gate: auto
+
+  - id: run-checks
+    name: Run Checks
+    type: parallel
+    fail_strategy: wait_all
+    steps:
+      - id: run-tests
+        type: bash
+        target: "echo tests"
+        outputs:
+          test_results: ".summary"
+      - id: run-lint
+        type: bash
+        target: "echo lint"
+        outputs:
+          lint_results: ".summary"
+    gate: auto
+
+  - id: done
+    name: Done
+    type: bash
+    target: "echo done"
+    gate: auto

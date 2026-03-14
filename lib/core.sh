@@ -79,17 +79,27 @@ cq_interpolate() {
 
 # --- Condition evaluation ---
 
-# Evaluate a condition string like "value1 == value2"
+# Evaluate a single condition expression like "value1 == value2"
 # Returns 0 (true) or 1 (false)
-cq_evaluate_condition() {
+_cq_evaluate_single() {
   local condition="$1"
   local lhs op rhs
 
   # Trim whitespace
   condition=$(echo "$condition" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-  # Parse operator
-  if [[ "$condition" =~ ^(.+)[[:space:]]+(==|!=|contains|empty|not_empty)[[:space:]]*(.*)?$ ]]; then
+  # Handle bare unary operators (just "empty" or "not_empty" after trimming)
+  if [[ "$condition" == "empty" || "$condition" == "not_empty" ]]; then
+    lhs=""
+    op="$condition"
+    rhs=""
+  # Handle unary operators with lhs (e.g., "some_value empty")
+  elif [[ "$condition" =~ ^(.*)[[:space:]]+(empty|not_empty)[[:space:]]*$ ]]; then
+    lhs=$(echo "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    op="${BASH_REMATCH[2]}"
+    rhs=""
+  # Parse binary operators (order matters: >= before >, <= before <)
+  elif [[ "$condition" =~ ^(.+)[[:space:]]+(==|!=|>=|<=|>|<|contains|matches)[[:space:]]+(.*)?$ ]]; then
     lhs=$(echo "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     op="${BASH_REMATCH[2]}"
     rhs=$(echo "${BASH_REMATCH[3]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
@@ -104,8 +114,23 @@ cq_evaluate_condition() {
     "!=")
       [[ "$lhs" != "$rhs" ]]
       ;;
+    ">")
+      [[ "$lhs" -gt "$rhs" ]] 2>/dev/null || return 1
+      ;;
+    "<")
+      [[ "$lhs" -lt "$rhs" ]] 2>/dev/null || return 1
+      ;;
+    ">=")
+      [[ "$lhs" -ge "$rhs" ]] 2>/dev/null || return 1
+      ;;
+    "<=")
+      [[ "$lhs" -le "$rhs" ]] 2>/dev/null || return 1
+      ;;
     "contains")
       [[ "$lhs" == *"$rhs"* ]]
+      ;;
+    "matches")
+      [[ "$lhs" =~ $rhs ]]
       ;;
     "empty")
       [[ -z "$lhs" || "$lhs" =~ ^[[:space:]]*$ ]]
@@ -117,6 +142,45 @@ cq_evaluate_condition() {
       return 1
       ;;
   esac
+}
+
+# Evaluate a condition string, supporting compound AND/OR expressions.
+# Examples:
+#   "value1 == value2"
+#   "count > 0"
+#   "name matches ^feat"
+#   "a == true AND b == true"
+#   "x == 1 OR y == 2"
+# Note: AND/OR cannot be mixed — use one or the other.
+# Returns 0 (true) or 1 (false)
+cq_evaluate_condition() {
+  local condition="$1"
+
+  # Trim whitespace
+  condition=$(echo "$condition" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+  # Check for AND compound (split on " AND ")
+  if [[ "$condition" == *" AND "* ]]; then
+    local part
+    while IFS= read -r part; do
+      [[ -z "$part" ]] && continue
+      _cq_evaluate_single "$part" || return 1
+    done <<< "$(echo "$condition" | sed 's/ AND /\n/g')"
+    return 0
+  fi
+
+  # Check for OR compound (split on " OR ")
+  if [[ "$condition" == *" OR "* ]]; then
+    local part
+    while IFS= read -r part; do
+      [[ -z "$part" ]] && continue
+      _cq_evaluate_single "$part" && return 0
+    done <<< "$(echo "$condition" | sed 's/ OR /\n/g')"
+    return 1
+  fi
+
+  # Simple condition
+  _cq_evaluate_single "$condition"
 }
 
 # --- Configuration ---
@@ -199,6 +263,30 @@ cq_release_lock() {
     rmdir "$CQ_CURRENT_LOCK" 2>/dev/null
     CQ_CURRENT_LOCK=""
   fi
+}
+
+# Execute a function while holding a lock on the run directory.
+# Acquires the lock, runs the command, and releases on exit (including errors).
+# Usage: cq_with_lock "$run_dir" some_function arg1 arg2
+cq_with_lock() {
+  local run_dir="$1"; shift
+  cq_acquire_lock "$run_dir"
+  trap 'cq_release_lock' EXIT
+  "$@"
+  cq_release_lock
+  trap - EXIT
+}
+
+# --- Run validation ---
+
+# Validate a run_id exists, die with usage if missing or not found.
+# Returns the run directory path via stdout.
+# Usage: run_dir=$(cq_require_run "$run_id" "cq command <run_id>")
+cq_require_run() {
+  local run_id="$1" usage="$2"
+  [[ -z "$run_id" ]] && cq_die "Usage: $usage"
+  cq_run_exists "$run_id" || cq_die "Run not found: ${run_id}"
+  cq_run_dir "$run_id"
 }
 
 # --- Project root ---

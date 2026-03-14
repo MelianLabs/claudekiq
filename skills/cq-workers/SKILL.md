@@ -33,7 +33,10 @@ Agent tool call:
   prompt: <child agent prompt below>
 ```
 
-5. After spawning all workers, enter the **Monitoring Loop**
+5. For EACH job, also create a Task in the parent session for dashboard tracking:
+   - Use `TaskCreate` with name: `"Worker: <job_id> — <description>"` and description: `"Processing <job_id>"`
+   - Save the `task_id` — you'll update it during monitoring
+6. After spawning all workers, enter the **Monitoring Loop**
 
 ### Child Agent Prompt
 
@@ -111,6 +114,12 @@ After spawning all workers, loop until all jobs reach a terminal state:
 ```bash
 cq workers status <session_id> --json
 ```
+
+### Step 1.5: Update Tasks
+For each worker, update the corresponding Task created during startup:
+- Use `TaskUpdate` to reflect the worker's current status from the filesystem status files
+- Set task status to `in_progress` (running), `blocked` (gated), `completed`, or `failed`
+- This makes worker progress visible in Claude Code's native status bar
 
 ### Step 2: Display Dashboard
 ```

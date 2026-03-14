@@ -133,25 +133,21 @@ Find the step definition in `steps` where `id == meta.current_step`. Extract:
 ### Step 5: Interpolate Variables
 Replace all `{{variable}}` references in `target` and `args_template` with values from `ctx`. Use the context JSON to resolve them.
 
-### Step 5.5: Write Heartbeat
-Before executing the step, write a heartbeat to signal the runner is alive:
+### Step 5.5: Track Progress with Tasks
+
+Before executing the step, create a Claude Code Task for progress tracking and write a heartbeat:
+
+1. **Create a Task** using `TaskCreate`:
+   - `name`: `"cq: <workflow> step <current>/<total> — <step_name>"`
+   - `description`: `"Executing step <step_id> of workflow <template>"`
+   - Save the returned `task_id` for later update
+
+2. **Write heartbeat** (still needed for `check-stale` backward compat):
 ```bash
 cq heartbeat <run_id>
 ```
-This lets `cq check-stale` detect if the runner crashes mid-step.
 
-For **long-running steps** (`agent`, `skill`, or `bash` commands that spawn background agents), start a background heartbeat loop **before** executing the step, and kill it **after**:
-```bash
-# Start background heartbeat (every 30s)
-( while true; do cq heartbeat <run_id> 2>/dev/null; sleep 30; done ) &
-CQ_HB_PID=$!
-
-# ... execute the step ...
-
-# Stop background heartbeat
-kill $CQ_HB_PID 2>/dev/null; wait $CQ_HB_PID 2>/dev/null
-```
-This prevents `check-stale` from falsely flagging runs as stale during multi-minute agent/skill executions.
+This replaces the background heartbeat loop. Claude Code's task system provides built-in progress tracking visible in the status bar, and each step becomes a trackable task with metrics.
 
 ### Step 6: Execute Step
 
@@ -188,16 +184,63 @@ cq add-steps <run_id> --flow <target> --after <current_step_id>
 ```
 Then mark the current step as pass and continue.
 
+#### `for_each`
+Iterate over a delimited list, executing a sub-step for each item:
+- Read `over` (interpolated) — the list to iterate over (e.g., `"rails,webpack,marketplace"`)
+- Read `delimiter` (default `","`) — how to split the list
+- Read `item_var` — the variable name to set in context for each iteration
+- Read `max_iterations` (default `100`) — safety limit
+- Read `step` — the sub-step definition to execute per item
+- For each item in the split list:
+  1. Set the item_var in context: `cq ctx set <run_id> <item_var> <item>`
+  2. Execute the sub-step as if it were the current step (interpolate, execute by type, check outcome)
+  3. If the sub-step fails and gate is not `auto`, handle accordingly
+- After all iterations complete, the outcome is `pass` if ALL iterations passed, `fail` if any failed
+- Track iteration progress: "for_each 2/3: testing webpack"
+
+#### `parallel`
+Execute multiple sub-steps concurrently:
+- Read `steps` — array of sub-step definitions
+- Read `fail_strategy` (default `"wait_all"`) — `"wait_all"` waits for all children before determining outcome, `"fail_fast"` cancels remaining children when one fails
+- Launch ALL child steps simultaneously using parallel Agent tool calls (with `run_in_background: true` for background execution)
+- Monitor completion of all children
+- Outcome: `pass` if ALL children pass, `fail` if any child fails
+- Each child step's outputs are merged into the parent context
+- Track parallel progress: "parallel 2/3 done: ✅ run-tests, 🔄 run-lint, ⬚ code-review"
+
+#### `batch`
+Spawn multiple isolated worker agents, each processing one item from a list:
+- Read `jobs_from` (interpolated) — a JSON array in context, or a context key containing a JSON array
+- Read `worker_prompt` (interpolated per item) — the prompt template for each worker. Use `{{item.field}}` to reference job fields
+- Read `max_workers` (default `5`) — maximum concurrent workers
+- Invoke the `/cq-workers` skill internally:
+  1. Transform `jobs_from` into the `--jobs` JSON format expected by `/cq-workers`
+  2. For each job item, interpolate the `worker_prompt` as the task description
+  3. Use the Skill tool: `skill: "cq-workers"`, `args: "<workflow> --jobs='[...]'"`
+- Outcome: `pass` if all workers complete successfully, `fail` if any worker fails
+- Worker results are aggregated into the context under the `outputs` key
+
+### Step 5.6: Handle Timeouts
+
+If the step has a `timeout` field (in seconds):
+- For `bash` steps: wrap the command with a timeout: `timeout <seconds> <command>`. If it times out, the outcome is determined by `on_timeout` (default: `fail`)
+- For `agent`/`skill` steps: track elapsed time. If execution exceeds the timeout, stop and use the `on_timeout` outcome
+- `on_timeout` values:
+  - `"fail"` (default) — treat as a failed step
+  - `"skip"` — skip this step and advance as if passed
+  - `"<step_id>"` — jump to a specific step
+
 ### Step 7: Mark Step Complete
 ```bash
 cq step-done <run_id> <step_id> pass|fail [result_json]
 ```
 If the step produced JSON output (e.g. from a bash command), pass it as `result_json` so outputs can be extracted into context.
 
-After marking the step complete, refresh the heartbeat:
-```bash
-cq heartbeat <run_id>
-```
+After marking the step complete:
+1. **Update the Task** created in Step 5.5 using `TaskUpdate`:
+   - Set status to `completed` (if pass) or `failed` (if fail)
+   - Include a brief result summary
+2. **Refresh heartbeat**: `cq heartbeat <run_id>`
 
 ### Step 8: Handle Post-Step State
 Re-read status: `cq status <run_id> --json`
