@@ -2,7 +2,22 @@
 # setup.sh — Init, version, help, and skill installation commands
 
 cmd_init() {
-  local project_dir="${1:-$PWD}"
+  local project_dir="$PWD"
+  local install_mcp=false
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mcp) install_mcp=true; shift ;;
+      *)
+        # Treat non-flag arg as project_dir
+        if [[ -d "$1" ]]; then
+          project_dir="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
 
   if [[ -d "${project_dir}/.claudekiq" ]]; then
     # Already initialized — still update skills and gitignore in case of upgrades
@@ -15,8 +30,10 @@ cmd_init() {
       grep -qF '.claudekiq/workers/' "$gitignore" || echo '.claudekiq/workers/' >> "$gitignore"
     fi
 
-    # Install MCP config (added in v2.1.0)
-    _install_mcp_config "$project_dir"
+    # Install MCP config only if explicitly requested
+    if $install_mcp; then
+      _install_mcp_config "$project_dir"
+    fi
 
     cq_json_out --arg dir "$project_dir" '{status:"exists", directory:$dir}' || \
       cq_info "Already initialized in ${project_dir}"
@@ -50,8 +67,10 @@ cmd_init() {
   _install_skill "$project_dir"
   _install_workers_skill "$project_dir"
 
-  # Install MCP config
-  _install_mcp_config "$project_dir"
+  # Install MCP config only if explicitly requested
+  if $install_mcp; then
+    _install_mcp_config "$project_dir"
+  fi
 
   cq_json_out --arg dir "$project_dir" '{status:"initialized", directory:$dir}' || \
     cq_info "Initialized .claudekiq/ in ${project_dir}"
