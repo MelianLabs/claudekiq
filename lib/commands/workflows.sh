@@ -112,6 +112,20 @@ cmd_workflows_validate() {
     [[ -n "$err" ]] && errors+=("$err")
   done <<< "$step_errors"
 
+  # Check step types against known types + plugins
+  local type_warnings
+  type_warnings=$(jq -r '.steps[].type // empty' <<< "$wf_json" | sort -u | while IFS= read -r stype; do
+    [[ -z "$stype" ]] && continue
+    local kind
+    kind=$(cq_resolve_step_type "$stype")
+    if [[ "$kind" == "unknown" ]]; then
+      echo "Step type '${stype}' is not a built-in type and no matching agent or plugin was found (run 'cq scan' to discover plugins)"
+    fi
+  done)
+  while IFS= read -r warn; do
+    [[ -n "$warn" ]] && errors+=("$warn")
+  done <<< "$type_warnings"
+
   # Check for duplicate step IDs
   local dupes
   dupes=$(jq -r '[.steps[].id] | group_by(.) | map(select(length > 1)) | .[0][0] // empty' <<< "$wf_json")

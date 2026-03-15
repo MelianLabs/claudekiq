@@ -2,7 +2,7 @@
 name: cq-workers
 description: "Parallel workflow orchestration — spawn multiple Claude workers to process jobs concurrently. Use /cq-workers <workflow> --jobs='[...]' to start."
 argument-hint: "<workflow> --jobs='[...]' [--headless]"
-allowed-tools: Bash, Read, Agent, Skill, TaskCreate, TaskUpdate, CronCreate, CronDelete
+allowed-tools: Bash, Read, Agent, Skill, TaskCreate, TaskUpdate, CronCreate, CronDelete, AskUserQuestion
 context: fork
 agent: general-purpose
 ---

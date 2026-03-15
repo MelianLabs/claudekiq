@@ -382,6 +382,7 @@ Meanwhile, `/cq status` tracked progress from another session:
 | Command | Description |
 |---------|-------------|
 | `cq init` | Initialize cq in a project |
+| `cq scan` | Discover agents, skills, and plugins |
 | `cq config` | Show resolved configuration |
 | `cq config get <key>` | Get a config value |
 | `cq config set <key> <value>` | Set a project config value |
@@ -493,7 +494,8 @@ Project settings override global. You can set:
     private/               # Private workflows (gitignored)
   runs/                    # Run state (gitignored)
   workers/                 # Worker session coordination (gitignored)
-  plugins/                 # Custom step type handlers
+  plugins/                 # Custom step type handlers (bash scripts)
+  agent-mapping.json       # Agent name remapping (optional)
 
 .mcp.json                  # MCP plugin config (committed)
 .claude/skills/cq/         # Claude Code runner skill (committed)
@@ -501,6 +503,56 @@ Project settings override global. You can set:
 .claude/skills/cq-workers/ # Parallel workers skill (committed)
   SKILL.md                 # Skill definition
 ```
+
+## Discovery & Scanning
+
+After initializing, run `cq scan` to discover available agents, skills, and plugins in your project:
+
+```bash
+cq scan
+# Scanned: 5 agent(s), 2 skill(s), 1 plugin(s)
+
+cq scan --json
+# {"agents":[...],"skills":[...],"plugins":[...],"scanned_at":"..."}
+```
+
+Scan results are stored in `.claudekiq/settings.json` alongside your project config. The `/cq` runner uses this inventory to resolve custom step types and display available agents.
+
+## Plugins (Custom Step Types)
+
+Define custom step types backed by agents or bash scripts. When a workflow step has a type that isn't built-in (bash, agent, skill, etc.), cq resolves it:
+
+1. **Agent-backed**: `.claude/agents/<type>.md` — the type maps to a Claude Code agent
+2. **Bash plugin**: `.claudekiq/plugins/<type>.sh` — a script that follows the JSON protocol
+
+### Bash Plugin Protocol
+
+Create an executable script at `.claudekiq/plugins/<type>.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Receives step JSON on stdin
+input=$(cat)
+step_id=$(echo "$input" | jq -r '.id')
+
+# Do your work here...
+
+# Output result JSON on stdout
+echo '{"status":"pass","output":{"deployed":true}}'
+exit 0  # 0=pass, non-zero=fail
+```
+
+Use it in a workflow:
+
+```yaml
+steps:
+  - id: deploy
+    type: deploy    # matches .claudekiq/plugins/deploy.sh
+    target: "staging"
+    gate: human
+```
+
+Run `cq scan` after adding plugins so cq discovers them.
 
 ## Parallel Workers (`/cq-workers`)
 

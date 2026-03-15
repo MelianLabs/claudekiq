@@ -36,6 +36,7 @@ Command dispatch is a case statement in `cq` that maps command names to `cmd_*` 
 Commands were split from a monolithic `commands.sh` into domain-specific files:
 
 - `setup.sh` — `init`, `version`, `help`
+- `scan.sh` — `scan` (discover agents, skills, plugins)
 - `lifecycle.sh` — `start`, `status`, `list`, `log`
 - `flow.sh` — `pause`, `resume`, `cancel`, `retry`
 - `steps.sh` — `step-done`, `skip`
@@ -60,12 +61,33 @@ All run state lives in `.claudekiq/runs/<run_id>/` (gitignored):
 
 ### Key Concepts
 
-- **Step types**: `bash`, `agent`, `skill`, `manual`, `subflow`, plus custom plugins via `.claudekiq/plugins/<type>.sh`
+- **Step types**: `bash`, `agent`, `skill`, `manual`, `subflow`, `for_each`, `parallel`, `batch`, plus custom types via agent-backed plugins (`.claude/agents/<type>.md`) or bash plugins (`.claudekiq/plugins/<type>.sh`)
 - **Gates**: `auto` (continue), `human` (wait for approval), `review` (retry loop with max_visits escalation)
 - **Interpolation**: `{{variable}}` in targets/args, resolved from context
 - **Config resolution**: global (`~/.cq/config.json`) merged with project (`.claudekiq/settings.json`), project wins
 - **All commands support `--json`** for machine-readable output
 - **Headless mode**: `--headless` flag auto-approves gates and forces JSON output
+
+### Project Discovery (`cq scan`)
+
+`cq scan` discovers agents, skills, and plugins available in the project:
+- Scans `.claude/agents/*.md` — parses YAML frontmatter for name, model, tools, description
+- Scans `.claude/skills/*/SKILL.md` — parses frontmatter for name, description, allowed-tools
+- Scans `.claudekiq/plugins/*.sh` — detects bash plugin scripts
+- Writes results to `.claudekiq/settings.json` as `agents`, `skills`, `plugins` arrays
+- Preserves existing user config keys during merge
+
+### Plugin System
+
+Custom step types resolve in order: agent-backed (`.claude/agents/<type>.md`) → bash plugin (`.claudekiq/plugins/<type>.sh`) → scan results fallback.
+
+Bash plugin JSON protocol:
+- **stdin**: Step JSON (interpolated)
+- **stdout**: `{"status":"pass"|"fail", "output":{...}, "error":"..."}`
+- **exit code**: 0 = pass, non-zero = fail
+- **Environment**: `CQ_RUN_ID`, `CQ_STEP_ID`, `CQ_PROJECT_ROOT`
+
+The `cq_resolve_step_type()` function in `lib/core.sh` handles resolution.
 
 ## Git Safety
 

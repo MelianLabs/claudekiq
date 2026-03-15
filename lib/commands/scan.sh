@@ -129,8 +129,14 @@ _scan_plugins() {
 # Returns JSON via yq, or empty on failure
 _extract_frontmatter() {
   local file="$1"
+
+  # Check that file starts with ---
+  local first_line
+  first_line=$(head -1 "$file" 2>/dev/null)
+  [[ "$first_line" != "---" ]] && return 1
+
   local content
-  content=$(sed -n '1{/^---$/!q}; 1,/^---$/{/^---$/d; p}' "$file" 2>/dev/null)
+  content=$(sed -n '/^---$/,/^---$/p' "$file" 2>/dev/null | sed '1d;$d')
   [[ -z "$content" ]] && return 1
   echo "$content" | yq -o json '.' 2>/dev/null || return 1
 }

@@ -13,13 +13,12 @@ teardown() { teardown_test_project; }
   run "$CQ" scan
   [ "$status" -eq 0 ]
 
-  # Verify agents array in settings.json
-  local agents
-  agents=$(jq '.agents' .claudekiq/settings.json)
-  [ "$(echo "$agents" | jq 'length')" -eq 1 ]
-  [ "$(echo "$agents" | jq -r '.[0].name')" = "test-agent" ]
-  [ "$(echo "$agents" | jq -r '.[0].model')" = "sonnet" ]
-  [ "$(echo "$agents" | jq -r '.[0].description')" = "A mock agent for testing scan discovery" ]
+  # Verify test-agent is in the agents array (cq-worker is also present from init)
+  local agent
+  agent=$(jq '.agents[] | select(.name == "test-agent")' .claudekiq/settings.json)
+  [ "$(echo "$agent" | jq -r '.name')" = "test-agent" ]
+  [ "$(echo "$agent" | jq -r '.model')" = "sonnet" ]
+  [ "$(echo "$agent" | jq -r '.description')" = "A mock agent for testing scan discovery" ]
 }
 
 @test "scan parses agent tools as array" {
@@ -49,7 +48,9 @@ EOF
   run "$CQ" scan
   [ "$status" -eq 0 ]
 
-  [ "$(jq -r '.agents[0].name' .claudekiq/settings.json)" = "my-custom-agent" ]
+  local agent
+  agent=$(jq '.agents[] | select(.name == "my-custom-agent")' .claudekiq/settings.json)
+  [ "$(echo "$agent" | jq -r '.name')" = "my-custom-agent" ]
 }
 
 @test "scan discovers skills" {
@@ -105,8 +106,11 @@ EOF
 
   # User config preserved
   [ "$(jq -r '.concurrency' .claudekiq/settings.json)" = "3" ]
-  # Scan results present
-  [ "$(jq '.agents | length' .claudekiq/settings.json)" -eq 1 ]
+  # Scan results present — includes both test-agent and cq-worker from init
+  [ "$(jq '.agents | length' .claudekiq/settings.json)" -ge 1 ]
+  local found
+  found=$(jq -r '.agents[] | select(.name == "test-agent") | .name' .claudekiq/settings.json)
+  [ "$found" = "test-agent" ]
 }
 
 @test "scan --json output" {
@@ -116,10 +120,12 @@ EOF
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
 
-  # Output should be valid JSON
+  # Output should be valid JSON with agents array
   echo "$output" | jq '.' >/dev/null
-  [ "$(echo "$output" | jq '.agents | length')" -eq 1 ]
+  [ "$(echo "$output" | jq '.agents | length')" -ge 1 ]
   [ "$(echo "$output" | jq -r '.scanned_at')" != "null" ]
+  # Verify test-agent is in the output
+  [ "$(echo "$output" | jq -r '.agents[] | select(.name == "test-agent") | .name')" = "test-agent" ]
 }
 
 @test "scan updates scanned_at" {
@@ -149,6 +155,9 @@ EOF
 }
 
 @test "scan handles malformed frontmatter" {
+  # Remove the cq-worker agent installed by init to isolate this test
+  rm -f .claude/agents/cq-worker.md
+
   mkdir -p .claude/agents
   # File without frontmatter
   echo "Just a plain markdown file without frontmatter" > .claude/agents/broken.md
@@ -161,6 +170,9 @@ EOF
 }
 
 @test "scan handles empty project gracefully" {
+  # Remove agents installed by init to test empty state
+  rm -rf .claude/agents
+
   run "$CQ" scan
   [ "$status" -eq 0 ]
 
@@ -169,6 +181,9 @@ EOF
 }
 
 @test "scan multiple agents" {
+  # Remove cq-worker to count only our test agents
+  rm -f .claude/agents/cq-worker.md
+
   mkdir -p .claude/agents
   cp "$FIXTURES/mock-agent.md" .claude/agents/agent-a.md
   cat > .claude/agents/agent-b.md <<'EOF'

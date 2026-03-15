@@ -439,6 +439,43 @@ cq_marker() {
   jq -r --arg s "$status" '.markers[$s] // "?"' <<< "$config"
 }
 
+# --- Step type resolution ---
+
+# Resolve a step type to its handler kind.
+# Returns: "builtin", "agent", "plugin", or "unknown"
+# Usage: kind=$(cq_resolve_step_type "deploy")
+cq_resolve_step_type() {
+  local step_type="$1"
+
+  # 1. Built-in types
+  case "$step_type" in
+    bash|agent|skill|manual|subflow|for_each|parallel|batch) echo "builtin"; return ;;
+  esac
+
+  # 2. Agent-backed: .claude/agents/<type>.md
+  if [[ -f "${CQ_PROJECT_ROOT}/.claude/agents/${step_type}.md" ]]; then
+    echo "agent"; return
+  fi
+
+  # 3. Bash plugin: .claudekiq/plugins/<type>.sh
+  if [[ -x "${CQ_PROJECT_ROOT}/.claudekiq/plugins/${step_type}.sh" ]]; then
+    echo "plugin"; return
+  fi
+
+  # 4. Check scan results in settings.json
+  local settings="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
+  if [[ -f "$settings" ]]; then
+    local found
+    found=$(jq -r --arg t "$step_type" '
+      if (.agents // [] | map(.name) | index($t)) then "agent"
+      elif (.plugins // [] | map(.name) | index($t)) then "plugin"
+      else empty end' "$settings" 2>/dev/null)
+    if [[ -n "$found" ]]; then echo "$found"; return; fi
+  fi
+
+  echo "unknown"
+}
+
 # --- Agent target mapping ---
 
 # Resolve an agent target name through the optional mapping file.

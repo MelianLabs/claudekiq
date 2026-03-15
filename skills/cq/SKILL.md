@@ -2,7 +2,7 @@
 name: cq
 description: "Claudekiq workflow runner — orchestrates multi-step development workflows. Use /cq to list and run workflows, /cq <workflow> to start a specific one, or /cq status to monitor all jobs."
 argument-hint: "[workflow] [--key=val...]"
-allowed-tools: Bash, Read, Agent, Skill, TaskCreate, TaskUpdate, CronCreate, CronDelete
+allowed-tools: Bash, Read, Agent, Skill, TaskCreate, TaskUpdate, CronCreate, CronDelete, AskUserQuestion
 ---
 
 # Claudekiq Workflow Runner
@@ -16,6 +16,9 @@ Available workflows:
 
 Active runs:
 `!cq list --json 2>/dev/null || echo "[]"`
+
+Project inventory (agents, skills, plugins):
+`!jq '{agents: (.agents // []) | map(.name), skills: (.skills // []) | map(.name), plugins: (.plugins // []) | map(.name)}' .claudekiq/settings.json 2>/dev/null || echo "{}"`
 
 ## Invocation
 
@@ -128,10 +131,20 @@ If `meta.status` is `gated`:
 ```bash
 cq todos --json
 ```
-For each pending TODO:
-- Show the step name, action type, and description to the user
-- Ask: approve, reject, override, or dismiss
-- Run: `cq todo <number> <action>`
+
+**Simple gates (single TODO, direct user session — not a worker or headless):**
+- Use `AskUserQuestion` to ask the user inline:
+  - Question: "Step '<step_name>' needs approval. <description>"
+  - Options: Approve, Reject, Skip
+- Apply the user's choice: `cq todo <number> <action>`
+- Continue the runner loop immediately (go back to **Step 1**)
+
+**Complex gates (multiple TODOs, review gate escalation, or worker/headless context):**
+- Fall back to the standard TODO flow:
+- For each pending TODO:
+  - Show the step name, action type, and description to the user
+  - Ask: approve, reject, override, or dismiss
+  - Run: `cq todo <number> <action>`
 - After resolving, go back to **Step 1**
 
 ### Step 4: Find Current Step
@@ -177,26 +190,43 @@ Use the **Agent tool** to spawn a specialized agent:
    - Check for agent mapping: run `cq config get agent-mapping.<stripped_name>` or read `.claudekiq/agent-mapping.json` directly. If a mapping exists, use the mapped value as `subagent_type` (e.g., `code-review` → `code-reviewer`)
    - If no mapping found, use the stripped name directly as `subagent_type` — Claude Code resolves it against `.claude/agents/<name>.md` definitions. If no matching agent exists, it falls back to `general-purpose`.
 
-2. **Invoke the Agent tool:**
+2. **Set up heartbeat cron** (for non-background steps):
+   - Write initial heartbeat: `cq heartbeat <run_id>`
+   - Create heartbeat cron: `CronCreate(schedule: "*/1 * * * *", command: "cq heartbeat <run_id>")`
+   - Save the returned `cron_id` for cleanup after step completes
+
+3. **Check for agent resume** (retry/pause recovery):
+   - Check context for a saved agentId: `cq ctx get _agent_<step_id> <run_id>`
+   - If an agentId is found AND this step is being re-visited (visit count > 1), use `Agent(resume: <agentId>)` to resume the previous agent with updated context (e.g., failure details, new instructions)
+   - If no agentId found, or this is the first visit, spawn a fresh agent:
+
+4. **Invoke the Agent tool:**
    - `description`: step name (max 5 words)
-   - `subagent_type`: the stripped `@target` name (e.g., `cq-dev`, `code-review`, `rails-test`)
+   - `subagent_type`: the stripped `@target` name (e.g., `code-review`, `rails-test`)
    - `model`: from the step's `model` field (if present)
    - `prompt`: the interpolated `args_template`
    - `run_in_background`: `true` if the step has `background: true` (see Background Execution below)
 
-3. **Interpret results:**
+5. **Interpret results and save agentId:**
    - Agent returns successfully → outcome is `pass`
    - Agent returns with error or cannot complete → outcome is `fail`
    - Extract result JSON from the agent's response for `outputs` processing
-   - **Save the `agentId`** from the response — it can be used later to resume the agent if needed
+   - **Save the `agentId`** to context for future resume: `cq ctx set <run_id> _agent_<step_id> <agentId>`
+
+6. **Clean up heartbeat cron** (for non-background steps):
+   - Delete heartbeat cron: `CronDelete(id: <cron_id>)`
+   - Write final heartbeat: `cq heartbeat <run_id>`
 
 ##### Background execution
 
 If the step has `background: true`:
 1. Add `run_in_background: true` to the Agent tool call
-2. Do NOT wait for the result — immediately proceed to the next step
-3. When a later step references an output from this background step (via `{{var}}`), the runner must wait for the background agent's completion notification before proceeding
-4. After the background agent completes, mark the step done: `cq step-done <run_id> <step_id> pass|fail [result_json]`
+2. Save the `agentId` to context immediately: `cq ctx set <run_id> _agent_<step_id> <agentId>`
+3. Do NOT wait for the result — immediately proceed to the next step
+4. When a later step references an output from this background step (via `{{var}}`), the runner must wait for the background agent's completion notification before proceeding
+5. After the background agent completes:
+   - Use `Agent(resume: <agentId>)` to retrieve the detailed results
+   - Extract outputs and mark the step done: `cq step-done <run_id> <step_id> pass|fail [result_json]`
 
 If the step has `timeout` AND is NOT `background: true`, the runner should implicitly treat it as background so it can enforce the timeout:
 1. Launch the agent with `run_in_background: true`
@@ -206,8 +236,10 @@ If the step has `timeout` AND is NOT `background: true`, the runner should impli
 
 #### `skill`
 The `target` contains a skill name (e.g. `/review`). Invoke it:
-- Use the Skill tool with the target skill name and the interpolated args_template as arguments
-- Pass if successful, fail if not
+1. **Set up heartbeat cron**: same as agent steps — `CronCreate(schedule: "*/1 * * * *", command: "cq heartbeat <run_id>")`
+2. Use the Skill tool with the target skill name and the interpolated args_template as arguments
+3. Pass if successful, fail if not
+4. **Clean up heartbeat cron**: `CronDelete(id: <cron_id>)`
 
 #### `manual`
 This is a human action step:
@@ -280,13 +312,50 @@ Spawn multiple isolated worker agents, each processing one item from a list:
 - Outcome: `pass` if all workers complete successfully, `fail` if any worker fails
 - Worker results are aggregated into the context under the `outputs` key
 
+#### `<custom type>` (plugin resolution)
+If the step `type` is not one of the built-in types above (bash, agent, skill, manual, subflow, for_each, parallel, batch), it may be a **custom plugin type**. Resolve it in this order:
+
+1. **Agent-backed plugin**: Check if `.claude/agents/<type>.md` exists.
+   - If found, treat this as an agent step: use the **Agent tool** with `subagent_type` set to `<type>`
+   - The interpolated `args_template` becomes the prompt
+   - Use `model` from the step definition if present
+   - Interpret results same as a regular agent step (pass/fail)
+
+2. **Bash plugin**: Check if `.claudekiq/plugins/<type>.sh` exists and is executable.
+   - If found, execute via the Bash tool:
+     ```bash
+     echo '<interpolated_step_json>' | CQ_RUN_ID=<run_id> CQ_STEP_ID=<step_id> CQ_PROJECT_ROOT=<root> .claudekiq/plugins/<type>.sh
+     ```
+   - Parse stdout as JSON: `{"status":"pass"|"fail", "output":{...}, "error":"..."}`
+   - Exit code 0 → pass, non-zero → fail
+   - If the result has `output`, use it for step `outputs` extraction
+
+3. **Scan results fallback**: Check the project inventory (from `.claudekiq/settings.json` shown in Current State above):
+   - If the type name appears in the `agents` list → treat as agent-backed plugin (step 1)
+   - If the type name appears in the `plugins` list → treat as bash plugin (step 2)
+
+4. **Not found**: If no matching agent or plugin exists, mark the step as `fail` with error "Unknown step type: `<type>`. Run `cq scan` to discover plugins."
+
 ### Step 5.6: Handle Timeouts
 
 If the step has a `timeout` field (in seconds):
-- For `bash` steps: wrap the command with a timeout: `timeout <seconds> <command>`. If it times out, the outcome is determined by `on_timeout` (default: `fail`)
-- For `agent`/`skill` steps: track elapsed time. If execution exceeds the timeout, stop and use the `on_timeout` outcome
-- `on_timeout` values:
-  - `"fail"` (default) — treat as a failed step
+
+- **For `bash` steps**: wrap the command with a timeout: `timeout <seconds> <command>`. If it times out, the outcome is determined by `on_timeout` (default: `fail`)
+
+- **For `agent`/`skill` steps** with a `timeout` AND NOT `background: true`:
+  1. Create heartbeat cron as in Step 6 (agent section, step 2)
+  2. Launch the agent with `run_in_background: true` (implicit background for timeout enforcement)
+  3. Save the `agentId` to context: `cq ctx set <run_id> _agent_<step_id> <agentId>`
+  4. Track the start time
+  5. Wait for the agent's completion notification
+  6. **If agent completes within timeout**: process results normally, delete heartbeat cron
+  7. **If timeout exceeded** (no completion notification within `timeout` seconds):
+     - Mark step done: `cq step-done <run_id> <step_id> fail '{"error":"timeout"}'`
+     - Delete heartbeat cron
+     - Route via `on_timeout` (see below)
+
+- **`on_timeout` values**:
+  - `"fail"` (default) — treat as a failed step, use normal `on_fail` routing
   - `"skip"` — skip this step and advance as if passed
   - `"<step_id>"` — jump to a specific step
 
