@@ -63,6 +63,8 @@ Extract: `meta.status`, `meta.current_step`, `steps`, `state`, `ctx`
 ### 3. Handle Gates
 If `meta.status` is `gated`:
 
+**Default: Use `AskUserQuestion`** for all interactive gates. This provides immediate inline user interaction and is the primary gate mechanism.
+
 **Simple gate** (single approval, interactive session):
 - Use `AskUserQuestion` inline: "Step '<name>' needs approval. Approve or reject?"
 - Based on response: `cq todo <number> approve|reject`
@@ -75,6 +77,8 @@ If `meta.status` is `gated`:
 
 **Headless mode** (`--headless`):
 - Auto-approve all gates (existing behavior)
+
+> **Note:** The `cq todos`/`cq todo` CLI exists for programmatic and cross-session gate handling, but in interactive sessions always prefer `AskUserQuestion` for immediate user interaction.
 
 Return to step 1.
 

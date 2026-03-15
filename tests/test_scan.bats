@@ -231,6 +231,17 @@ EOF
   [ "$stored" = "plugin" ]
 }
 
+@test "scan updates .claude/cq.md" {
+  mkdir -p .claude/agents
+  cp "$FIXTURES/mock-agent.md" .claude/agents/test-agent.md
+
+  run "$CQ" scan
+  [ "$status" -eq 0 ]
+  [ -f .claude/cq.md ]
+  grep -q 'Claudekiq' .claude/cq.md
+  grep -q 'test-agent' .claude/cq.md
+}
+
 @test "schema scan returns valid JSON" {
   run "$CQ" schema scan
   [ "$status" -eq 0 ]

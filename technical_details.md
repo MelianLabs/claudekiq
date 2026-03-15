@@ -60,11 +60,6 @@ Uninstall: `rm -rf ~/.cq` and remove the PATH entry.
       steps.json            # Step definitions (ordered array)
       state.json            # Step states (status, visits, attempt, result per step)
       log.jsonl             # Event log (append-only, one JSON object per line)
-  workers/                  # Worker session coordination (gitignored)
-    <session_id>/
-      manifest.json         # Session metadata
-      <job_id>.status.json  # Written by child worker
-      <job_id>.answer.json  # Written by parent (gate responses)
 ```
 
 ### Gitignore
@@ -74,7 +69,6 @@ Uninstall: `rm -rf ~/.cq` and remove the PATH entry.
 ```
 .claudekiq/workflows/private/
 .claudekiq/runs/
-.claudekiq/workers/
 ```
 
 ---
@@ -505,110 +499,7 @@ Hooks run asynchronously (backgrounded) and their failure does not affect workfl
 
 ---
 
-## 11. Parallel Workers
-
-The `/cq-workers` skill enables parallel workflow execution by spawning multiple Claude Code agents, each in its own git worktree.
-
-### Architecture
-
-```
-Parent (main Claude instance)
-  │
-  ├─ cq workers init → creates session directory
-  │
-  ├─ Spawns Agent (worktree, background) → Worker 1: cq start bugfix --description="BUG-1"
-  ├─ Spawns Agent (worktree, background) → Worker 2: cq start bugfix --description="BUG-2"
-  └─ Spawns Agent (worktree, background) → Worker 3: cq start bugfix --description="BUG-3"
-  │
-  └─ Monitoring loop: polls cq workers status <session_id>
-      └─ On gate: asks user → cq workers answer → child picks it up
-```
-
-### Key Design Decisions
-
-**Git worktree isolation**: Each worker gets its own worktree via Claude Code's `isolation: "worktree"` parameter. This means `.claudekiq/runs/` in a child worktree is NOT visible from the parent. Workers need a shared coordination directory at an absolute path.
-
-**Shared coordination directory**: `.claudekiq/workers/<session_id>/` lives in the main worktree and is accessible to all workers via absolute path. The parent passes `PARENT_ROOT` to each worker agent's prompt.
-
-**Filesystem-based IPC**: Workers communicate with the parent through JSON files:
-- `<job_id>.status.json` — written by child after each step (status, current step, gate info)
-- `<job_id>.answer.json` — written by parent when answering a gate
-- Children poll for answer files when gated (every 5 seconds, 30 minute timeout)
-
-**Background agents**: Claude Code background agents auto-deny permission prompts. This means:
-- Workers cannot ask the user questions directly
-- All human interaction is funneled through the parent via coordination files
-- `--headless` mode auto-approves all gates, eliminating the need for coordination
-
-### Worker Session Lifecycle
-
-1. **Init**: `cq workers init` creates a session directory with `manifest.json`
-2. **Spawn**: Parent spawns one background Agent per job, each in its own worktree
-3. **Execute**: Each worker runs `cq init` → `cq start <workflow>` → runner loop
-4. **Report**: After each step, workers write status to `<job_id>.status.json`
-5. **Gate**: When gated, workers write gate info to status file and poll for `<job_id>.answer.json`
-6. **Answer**: Parent detects gate via `cq workers status`, asks user, writes answer via `cq workers answer`
-7. **Resume**: Worker reads answer file, applies it (approve/reject), continues workflow
-8. **Complete**: Worker writes final status, commits work in its worktree
-
-### Status File Format
-
-Written by workers to `<session_id>/<job_id>.status.json`:
-
-```json
-{
-  "status": "running|gated|completed|failed",
-  "run_id": "a1b2c3d4",
-  "step": "current-step-id",
-  "gate": {
-    "step": "code-review",
-    "description": "Review changes for BUG-101",
-    "action_needed": "approve or reject"
-  }
-}
-```
-
-### Answer File Format
-
-Written by parent to `<session_id>/<job_id>.answer.json`:
-
-```json
-{
-  "action": "approve",
-  "data": {"message": "looks good"},
-  "answered_at": "2026-03-13T10:00:00Z"
-}
-```
-
-### CLI Commands
-
-**`cq workers init`**
-- Creates `.claudekiq/workers/<session_id>/` with a `manifest.json`
-- Returns session ID (used for all subsequent commands)
-
-**`cq workers status <session_id>`**
-- Reads all `*.status.json` files in the session directory
-- Returns aggregate counts (running, gated, completed, failed) and per-job details
-- JSON output includes `jobs` array with `job_id`, `status`, and step info
-
-**`cq workers answer <session_id> <job_id> <action> [data_json]`**
-- Writes `<job_id>.answer.json` to the session directory
-- `action` is typically `approve` or `reject`
-- Optional `data_json` can be a JSON object or plain string (wrapped as `{message: "..."}`)
-
-**`cq workers cleanup [--max-age=N]`**
-- Removes session directories older than N seconds (default: 30 days)
-- Scans all sessions, checks `manifest.json` creation timestamp
-
-### Integration with `cq init`
-
-Running `cq init` (or re-running it on an existing project) will:
-- Add `.claudekiq/workers/` to `.gitignore`
-- Install the `cq-workers` skill to `.claude/skills/cq-workers/SKILL.md`
-
----
-
-## 12. MCP Server Mode
+## 11. MCP Server Mode
 
 `cq` can run as a Claude Code MCP (Model Context Protocol) plugin, exposing all commands as native tools that Claude discovers automatically. This works alongside the existing skill-based integration — both modes coexist.
 
@@ -662,8 +553,6 @@ Tools are generated dynamically from `cq schema`. Each command becomes an MCP to
 | `cq_heartbeat` | `cq heartbeat` | Write heartbeat |
 | `cq_check_stale` | `cq check-stale` | Detect stale runs |
 | `cq_cleanup` | `cq cleanup` | Remove expired runs |
-| `cq_workers` | `cq workers` | Worker orchestration |
-
 ### Setup
 
 **Option A: Register globally**

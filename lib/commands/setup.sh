@@ -23,12 +23,6 @@ cmd_init() {
     # Already initialized — update plugin.json and gitignore in case of upgrades
     _install_plugin_json "$project_dir"
 
-    # Ensure .gitignore has workers entry
-    local gitignore="${project_dir}/.gitignore"
-    if [[ -f "$gitignore" ]]; then
-      grep -qF '.claudekiq/workers/' "$gitignore" || echo '.claudekiq/workers/' >> "$gitignore"
-    fi
-
     # Install MCP config only if explicitly requested
     if $install_mcp; then
       _install_mcp_config "$project_dir"
@@ -39,6 +33,9 @@ cmd_init() {
 
     # Auto-install hooks
     CQ_PROJECT_ROOT="$project_dir" _hooks_install >/dev/null 2>&1 || true
+
+    # Generate .claude/cq.md context file
+    CQ_PROJECT_ROOT="$project_dir" _generate_cq_md >/dev/null 2>&1 || true
 
     cq_json_out --arg dir "$project_dir" '{status:"exists", directory:$dir}' || \
       cq_info "Already initialized in ${project_dir}"
@@ -55,16 +52,13 @@ cmd_init() {
   local gitignore="${project_dir}/.gitignore"
   local needs_private=true
   local needs_runs=true
-  local needs_workers=true
   if [[ -f "$gitignore" ]]; then
     grep -qF '.claudekiq/workflows/private/' "$gitignore" && needs_private=false
     grep -qF '.claudekiq/runs/' "$gitignore" && needs_runs=false
-    grep -qF '.claudekiq/workers/' "$gitignore" && needs_workers=false
   fi
   {
     $needs_private && echo '.claudekiq/workflows/private/'
     $needs_runs && echo '.claudekiq/runs/'
-    $needs_workers && echo '.claudekiq/workers/'
   } >> "$gitignore"
 
   # Install .claude-plugin/plugin.json (points to ~/.cq/skills/)
@@ -81,6 +75,9 @@ cmd_init() {
   # Auto-install hooks
   CQ_PROJECT_ROOT="$project_dir" _hooks_install >/dev/null 2>&1 || true
 
+  # Generate .claude/cq.md context file
+  CQ_PROJECT_ROOT="$project_dir" _generate_cq_md >/dev/null 2>&1 || true
+
   cq_json_out --arg dir "$project_dir" '{status:"initialized", directory:$dir}' || {
     cq_info "Initialized .claudekiq/ in ${project_dir}"
     cq_info "Run /cq-setup to generate customized workflows based on your project's agents and skills."
@@ -93,9 +90,9 @@ _install_plugin_json() {
   local plugin_dir="${project_dir}/.claude-plugin"
   mkdir -p "$plugin_dir"
   jq -cn --arg home "$cq_home" '{
-    name:"claudekiq", version:"3.1.2",
+    name:"claudekiq", version:"3.1.3",
     description:"Filesystem-backed workflow engine for Claude Code",
-    skills:[($home+"/skills/cq"),($home+"/skills/cq-agent"),($home+"/skills/cq-workers"),($home+"/skills/cq-setup")]
+    skills:[($home+"/skills/cq"),($home+"/skills/cq-agent"),($home+"/skills/cq-setup")]
   }' > "${plugin_dir}/plugin.json"
 }
 
@@ -166,24 +163,17 @@ _hooks_install() {
     {
       "matcher": "Bash",
       "type": "command",
-      "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) echo \"Blocked: cannot delete .claudekiq directory — use cq cleanup instead\" >&2; exit 2;; *\"git checkout\"*|*\"git switch\"*) if ls .claudekiq/runs/*/meta.json 2>/dev/null | head -1 | grep -q .; then for f in .claudekiq/runs/*/meta.json; do status=$(jq -r .status \"$f\" 2>/dev/null); if [ \"$status\" = \"running\" ] || [ \"$status\" = \"gated\" ]; then echo \"Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first.\" >&2; exit 2; fi; done; fi;; *\"Edit\"*|*\"Write\"*) :;; esac; exit 0'"
+      "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: deleting .claudekiq directory — use cq cleanup instead\" >&2; exit 0; else echo \"Blocked: cannot delete .claudekiq directory — use cq cleanup instead\" >&2; exit 2; fi;; *\"git checkout\"*|*\"git switch\"*) if ls .claudekiq/runs/*/meta.json 2>/dev/null | head -1 | grep -q .; then for f in .claudekiq/runs/*/meta.json; do status=$(jq -r .status \"$f\" 2>/dev/null); if [ \"$status\" = \"running\" ] || [ \"$status\" = \"gated\" ]; then if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: git checkout/switch while cq workflows are running/gated.\" >&2; exit 0; else echo \"Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first.\" >&2; exit 2; fi; fi; done; fi;; *\"Edit\"*|*\"Write\"*) :;; esac; exit 0'"
     },
     {
       "matcher": "Edit",
       "type": "command",
-      "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); case \"$path\" in */.claudekiq/runs/*) echo \"Blocked: do not edit run files directly — use cq commands instead\" >&2; exit 2;; esac; exit 0'"
+      "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$path\" in */.claudekiq/runs/*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: editing run files directly — use cq commands instead\" >&2; exit 0; else echo \"Blocked: do not edit run files directly — use cq commands instead\" >&2; exit 2; fi;; esac; exit 0'"
     },
     {
       "matcher": "Write",
       "type": "command",
-      "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); case \"$path\" in */.claudekiq/runs/*) echo \"Blocked: do not write to run files directly — use cq commands instead\" >&2; exit 2;; esac; exit 0'"
-    }
-  ],
-  "SubagentStop": [
-    {
-      "type": "command",
-      "command": "bash -c 'input=$(cat); desc=$(echo \"$input\" | jq -r \".description // empty\"); case \"$desc\" in Worker:*) if command -v osascript &>/dev/null; then osascript -e \"display notification \\\"$desc completed\\\" with title \\\"cq: Worker Done\\\" sound name \\\"Ping\\\"\" &>/dev/null; elif command -v notify-send &>/dev/null; then notify-send \"cq: Worker Done\" \"$desc completed\" &>/dev/null; fi;; esac; exit 0'",
-      "async": true
+      "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$path\" in */.claudekiq/runs/*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: writing to run files directly — use cq commands instead\" >&2; exit 0; else echo \"Blocked: do not write to run files directly — use cq commands instead\" >&2; exit 2; fi;; esac; exit 0'"
     }
   ],
   "PostToolUse": [
@@ -216,7 +206,6 @@ HOOKS_JSON
     .hooks = (.hooks // {}) |
     .hooks.SessionEnd = ((.hooks.SessionEnd // []) + $cq_hooks.SessionEnd | unique_by(.command)) |
     .hooks.PreToolUse = ((.hooks.PreToolUse // []) + $cq_hooks.PreToolUse | unique_by(.command)) |
-    .hooks.SubagentStop = ((.hooks.SubagentStop // []) + $cq_hooks.SubagentStop | unique_by(.command)) |
     .hooks.PostToolUse = ((.hooks.PostToolUse // []) + $cq_hooks.PostToolUse | unique_by(.command)) |
     .hooks.WorktreeCreate = ((.hooks.WorktreeCreate // []) + $cq_hooks.WorktreeCreate | unique_by(.command))
   ' <<< "$existing")
@@ -359,4 +348,80 @@ _help_for_command() {
     cleanup) echo "Usage: cq cleanup" ;;
     *)       echo "Unknown command: $cmd. Run 'cq help' for usage." ;;
   esac
+}
+
+# --- Generate .claude/cq.md context file ---
+
+_generate_cq_md() {
+  local project_dir="${CQ_PROJECT_ROOT:-$PWD}"
+  local settings_file="${project_dir}/.claudekiq/settings.json"
+  local cq_md="${project_dir}/.claude/cq.md"
+
+  mkdir -p "${project_dir}/.claude"
+
+  {
+    echo '# Claudekiq (cq) — Project Workflows'
+    echo '<!-- Auto-generated by cq. Regenerate with: cq scan -->'
+    echo ''
+
+    # Available workflows
+    echo '## Available Workflows'
+    local workflows_dir="${project_dir}/.claudekiq/workflows"
+    local found_workflow=false
+    if [[ -d "$workflows_dir" ]]; then
+      local wf
+      for wf in "$workflows_dir"/*.yml "$workflows_dir"/*.yaml; do
+        [[ -f "$wf" ]] || continue
+        found_workflow=true
+        local wf_name wf_desc
+        wf_name=$(basename "$wf" | sed 's/\.\(yml\|yaml\)$//')
+        wf_desc=$(yq -r '.description // ""' "$wf" 2>/dev/null || true)
+        if [[ -n "$wf_desc" ]]; then
+          echo "- **${wf_name}** — ${wf_desc}"
+        else
+          echo "- **${wf_name}**"
+        fi
+      done
+    fi
+    $found_workflow || echo '_No workflows defined yet. Run /cq-setup to generate workflows._'
+    echo ''
+
+    # Project stacks
+    if [[ -f "$settings_file" ]]; then
+      local stacks
+      stacks=$(jq -r '.stacks // [] | .[] | "- " + .language + (if .framework then " / " + .framework else "" end) + (if .test_command then " — test: `" + .test_command + "`" else "" end) + (if .build_command then ", build: `" + .build_command + "`" else "" end)' "$settings_file" 2>/dev/null || true)
+      if [[ -n "$stacks" ]]; then
+        echo '## Project Stacks'
+        echo "$stacks"
+        echo ''
+      fi
+
+      # Available agents
+      local agents
+      agents=$(jq -r '.agents // [] | .[] | "- @" + .name + (if .model then " (" + .model + ")" else "" end) + (if .description then " — " + .description else "" end)' "$settings_file" 2>/dev/null || true)
+      if [[ -n "$agents" ]]; then
+        echo '## Available Agents'
+        echo "$agents"
+        echo ''
+      fi
+    fi
+
+    # Skills (always present)
+    echo '## Skills'
+    echo '- `/cq` — Run and monitor workflows'
+    echo '- `/cq-agent` — Execute agent steps (called by /cq runner)'
+    echo '- `/cq-setup` — Generate customized workflows for this project'
+    echo ''
+
+    # Quick start
+    echo '## Quick Start'
+    echo '- `/cq` — Interactive workflow picker'
+    echo '- `/cq <workflow>` — Start a specific workflow'
+    echo '- `/cq status` — Monitor running workflows'
+    echo ''
+
+    # Batch processing note
+    echo '## Batch Processing'
+    echo "For parallel batch processing, use Claude Code's built-in \`/batch\` skill."
+  } > "$cq_md"
 }

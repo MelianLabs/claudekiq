@@ -42,65 +42,37 @@ _mcp_arg() {
   jq -r --arg k "$1" '.[$k] // empty' <<< "$2"
 }
 
-# Build the tools list from cq schema
+# Build the tools list from compact schema data in a single jq pass
 _mcp_build_tools() {
-  # Commands to expose as MCP tools (skip meta commands like help, schema, version, init, config)
   local commands
-  read -ra commands <<< "$(cq_command_list)"
+  commands=$(cq_command_list)
+  local data
+  data=$(_cq_schema_data)
 
-  local -a tool_items=()
-  local cmd
-  for cmd in "${commands[@]}"; do
-    local schema_json
-    schema_json=$(cmd_schema "$cmd" 2>/dev/null) || continue
-
-    local desc
-    desc=$(jq -r '.description // ""' <<< "$schema_json")
-
-    # Build input schema from parameters
-    local properties="{}"
-    local required="[]"
-    local params param_count
-    params=$(jq -c '.parameters // []' <<< "$schema_json")
-    param_count=$(jq 'length' <<< "$params")
-
-    local i
-    for ((i = 0; i < param_count; i++)); do
-      local param name type param_desc is_required json_type
-      param=$(jq --argjson i "$i" '.[$i]' <<< "$params")
-      name=$(jq -r '.name' <<< "$param" | sed 's/^--//' | sed 's/=.*$//' | tr '-' '_')
-      type=$(jq -r '.type // "string"' <<< "$param")
-      param_desc=$(jq -r '.description // ""' <<< "$param")
-      is_required=$(jq -r '.required // false' <<< "$param")
-
-      json_type=$(_mcp_json_type "$type")
-
-      properties=$(jq \
-        --arg name "$name" --arg type "$json_type" --arg desc "$param_desc" \
-        '. + {($name): {type:$type, description:$desc}}' <<< "$properties")
-
-      if [[ "$is_required" == "true" ]]; then
-        required=$(jq --arg n "$name" '. + [$n]' <<< "$required")
-      fi
-    done
-
-    local input_schema
-    input_schema=$(jq -cn --argjson props "$properties" --argjson req "$required" \
-      '{type:"object", properties:$props, required:$req}')
-
-    # Tool name: replace hyphens with underscores, prefix with cq_
-    local tool_name="cq_$(echo "$cmd" | tr '-' '_')"
-
-    tool_items+=("$(jq -cn \
-      --arg name "$tool_name" --arg desc "$desc" --argjson schema "$input_schema" \
-      '{name:$name, description:$desc, inputSchema:$schema}')")
-  done
-
-  if [[ ${#tool_items[@]} -gt 0 ]]; then
-    printf '%s\n' "${tool_items[@]}" | jq -s '.'
-  else
-    echo "[]"
-  fi
+  echo "$commands" | tr ' ' '\n' | jq -Rcs --argjson data "$data" '
+    split("\n") | map(select(. != "")) | map(
+      . as $cmd |
+      $data[$cmd] // null |
+      if . == null then empty
+      else
+        {
+          name: ("cq_" + ($cmd | gsub("-"; "_"))),
+          description: .d,
+          inputSchema: {
+            type: "object",
+            properties: ([.a[] | {
+              key: (.[0] | ltrimstr("--") | split("=")[0] | gsub("-"; "_")),
+              value: {
+                type: (if .[1] == "integer" then "integer" elif .[1] == "boolean" then "boolean" else "string" end),
+                description: .[3]
+              }
+            }] | from_entries),
+            required: [.a[] | select(.[2] == true) | .[0] | ltrimstr("--") | split("=")[0] | gsub("-"; "_")]
+          }
+        }
+      end
+    )
+  '
 }
 
 # Handle tools/list request

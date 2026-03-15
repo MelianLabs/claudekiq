@@ -79,7 +79,7 @@ Hooks are auto-installed into `.claude/settings.json`. Skills are served via the
 ### Hooks System (`cq hooks`)
 
 Hooks are auto-installed by `cq init`:
-- Merges cq-specific hooks into `.claude/settings.json` (SessionEnd, PreToolUse, SubagentStop, PostToolUse, WorktreeCreate)
+- Merges cq-specific hooks into `.claude/settings.json` (SessionEnd, PreToolUse, PostToolUse, WorktreeCreate)
 - `cq hooks uninstall` cleanly removes only cq hooks
 - Configurable notification commands in `.claudekiq/settings.json` → `notifications`: `on_start`, `on_gate`, `on_fail`, `on_complete`
 - `cq_fire_hook()` emits structured JSON events with version, status, and timestamp to stderr
@@ -107,6 +107,20 @@ Custom step types resolve via `cq_resolve_step_type()` in `lib/core.sh`:
 2. Agent-backed: `.claude/agents/<type>.md` file exists → returns `"agent"`
 3. Scan results: `agents` array in settings.json → returns `"agent"`
 4. Otherwise: returns `"convention"` (treated as agent step with type name as semantic context)
+
+### Context File (`.claude/cq.md`)
+
+`cq init` and `cq scan` generate `.claude/cq.md` with project context (available workflows, agents, stacks, skills). Claude Code loads this automatically so it always knows the project's workflow capabilities.
+
+### Safety Configuration
+
+The `safety` config key controls hook behavior:
+- `"strict"` (default) — hooks block dangerous operations (exit 2)
+- `"relaxed"` — hooks warn but allow operations (exit 0)
+
+Set via: `cq config set safety relaxed`
+
+For parallel batch processing, use Claude Code's built-in `/batch` skill.
 
 ## Git Safety
 

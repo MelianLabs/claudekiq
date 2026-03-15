@@ -20,6 +20,9 @@ cmd_scan() {
 
   _merge_scan_results "$agents" "$skills" "$stacks"
 
+  # Regenerate .claude/cq.md context file
+  _generate_cq_md >/dev/null 2>&1 || true
+
   local ts
   ts=$(cq_now)
   local agent_count skill_count stack_count

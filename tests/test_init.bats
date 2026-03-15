@@ -26,8 +26,8 @@ teardown() {
   "$CQ" init >/dev/null
   [ -f .claude-plugin/plugin.json ]
   jq -e '.name == "claudekiq"' .claude-plugin/plugin.json
-  jq -e '.version == "3.1.2"' .claude-plugin/plugin.json
-  jq -e '.skills | length == 4' .claude-plugin/plugin.json
+  jq -e '.version == "3.1.3"' .claude-plugin/plugin.json
+  jq -e '.skills | length == 3' .claude-plugin/plugin.json
 }
 
 @test "init does not create .claude/skills" {
@@ -77,7 +77,6 @@ teardown() {
   "$CQ" init >/dev/null
   grep -qF '.claudekiq/workflows/private/' .gitignore
   grep -qF '.claudekiq/runs/' .gitignore
-  grep -qF '.claudekiq/workers/' .gitignore
 }
 
 @test "init is idempotent" {
@@ -124,6 +123,47 @@ teardown() {
   "$CQ" init --mcp >/dev/null
   [ -f .mcp.json ]
   jq -e '.mcpServers.cq' .mcp.json
+}
+
+@test "init generates .claude/cq.md" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  [ -f .claude/cq.md ]
+  grep -q 'Claudekiq' .claude/cq.md
+}
+
+@test "init re-run regenerates .claude/cq.md" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  [ -f .claude/cq.md ]
+  echo "corrupted" > .claude/cq.md
+  "$CQ" init >/dev/null
+  grep -q 'Claudekiq' .claude/cq.md
+}
+
+@test "hooks with safety=strict block operations" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  # Default is strict — the Bash hook should exit 2 for rm -rf .claudekiq
+  local hook_cmd
+  hook_cmd=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .command' .claude/settings.json)
+  # Simulate the hook with a matching command
+  result=$(echo '{"tool_input":{"command":"rm -rf .claudekiq"}}' | bash -c "$hook_cmd" 2>&1) && exit_code=0 || exit_code=$?
+  [ "$exit_code" -eq 2 ]
+}
+
+@test "hooks with safety=relaxed allow otherwise-blocked operations" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  # Set safety to relaxed
+  jq '. + {"safety":"relaxed"}' .claudekiq/settings.json > .claudekiq/settings.json.tmp
+  mv .claudekiq/settings.json.tmp .claudekiq/settings.json
+  # Reinstall hooks
+  "$CQ" hooks install >/dev/null
+  local hook_cmd
+  hook_cmd=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .command' .claude/settings.json)
+  result=$(echo '{"tool_input":{"command":"rm -rf .claudekiq"}}' | bash -c "$hook_cmd" 2>&1) && exit_code=0 || exit_code=$?
+  [ "$exit_code" -eq 0 ]
 }
 
 @test "init does not create .claudekiq/plugins" {

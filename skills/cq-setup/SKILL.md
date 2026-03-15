@@ -105,6 +105,7 @@ Convention-based custom types (e.g., `review`, `deploy`, `migrate`) are also sup
 6. **Set appropriate gates** — `human` for risky steps (deploy, commit, push) and for steps that need human review (replaces old `manual` type), `review` for tests with retry, `auto` for safe steps.
 7. **Test-fix loops** — Use `review` gate with `max_visits: 3`, `on_fail` pointing to a fix step, fix step pointing back to test.
 8. **Timeouts** — Add `timeout: 300` (seconds) for steps that might hang.
+9. **Parallel/batch processing** — For parallel or batch processing needs, direct users to Claude Code's built-in `/batch` skill instead of building parallelism into workflows.
 
 ## Step 4: Validate
 
