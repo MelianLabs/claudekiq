@@ -89,12 +89,18 @@ Hooks are opt-in via `cq hooks install`:
 
 ### Project Discovery (`cq scan`)
 
-`cq scan` discovers agents and skills available in the project:
+`cq scan` discovers agents, skills, and stacks available in the project:
 - Scans `.claude/agents/*.md` — parses YAML frontmatter for name, model, tools, description
 - Scans `.claude/skills/*/SKILL.md` — parses frontmatter for name, description, allowed-tools
-- Writes results to `.claudekiq/settings.json` as `agents`, `skills` arrays
+- Detects project stacks — returns `stacks` as an array (multi-stack support: e.g., Rails + React)
+- Each stack object has: `language`, `framework`, `test_command`, `build_command`, `lint_command`
+- Writes results to `.claudekiq/settings.json` as `agents`, `skills`, `stacks` arrays
 - Preserves existing user config keys (including `agent_mappings`) during merge
 - Auto-runs on `cq init` (both fresh and re-init)
+
+### Agent Naming Convention
+
+Agents are named after their stack: `@rails-dev`, `@react-dev`, `@go-dev`, etc. This convention replaces the generic `@implementer` pattern and makes agent purpose clear in workflows.
 
 ### Custom Step Types
 

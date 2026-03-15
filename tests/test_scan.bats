@@ -181,6 +181,20 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "scan removes stale singular stack key" {
+  # Write a stale singular "stack" key
+  jq '. + {"stack":{"language":"old"}}' .claudekiq/settings.json > .claudekiq/settings.json.tmp
+  mv .claudekiq/settings.json.tmp .claudekiq/settings.json
+
+  run "$CQ" scan
+  [ "$status" -eq 0 ]
+
+  # singular "stack" key should be removed, "stacks" array should exist
+  run jq -e '.stack' .claudekiq/settings.json
+  [ "$status" -ne 0 ]
+  jq -e '.stacks | type == "array"' .claudekiq/settings.json
+}
+
 @test "schema scan returns valid JSON" {
   run "$CQ" schema scan
   [ "$status" -eq 0 ]

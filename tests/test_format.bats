@@ -121,9 +121,9 @@ EOF
 
 @test "validate routing workflow detects missing agent target" {
   run "$CQ" workflows validate "$TEST_DIR/.claudekiq/workflows/with_routing.yml"
-  # with_routing.yml references @dev which doesn't exist in test env
+  # with_routing.yml references @node-dev which doesn't exist in test env
   [ "$status" -eq 1 ]
-  [[ "$output" == *"@dev"* ]]
+  [[ "$output" == *"@node-dev"* ]]
 }
 
 @test "validate rejects unknown model" {
@@ -151,7 +151,7 @@ steps:
   - id: step1
     name: Step 1
     type: agent
-    target: "@dev"
+    target: "@node-dev"
     args_template: "do the thing"
     gate: auto
 EOF

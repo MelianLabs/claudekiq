@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# test_scan_stack.bats — Tests for stack detection in cq scan
+# test_scan_stack.bats — Tests for multi-stack detection in cq scan
 
 load setup.bash
 
@@ -16,10 +16,10 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "javascript" ]
-  [ "$(echo "$output" | jq -r '.stack.test_command')" = "npm test" ]
-  [ "$(echo "$output" | jq -r '.stack.build_command')" = "npm run build" ]
-  [ "$(echo "$output" | jq -r '.stack.lint_command')" = "npm run lint" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "javascript" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].test_command')" = "npm test" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].build_command')" = "npm run build" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].lint_command')" = "npm run lint" ]
 }
 
 @test "scan detects typescript when tsconfig.json present" {
@@ -30,7 +30,7 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "typescript" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "typescript" ]
 }
 
 @test "scan detects next framework from package.json" {
@@ -40,7 +40,17 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.framework')" = "next" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].framework')" = "next" ]
+}
+
+@test "scan detects preact framework from package.json" {
+  cat > package.json <<'EOF'
+{"name": "preact-app", "dependencies": {"preact": "10.0.0"}}
+EOF
+
+  run "$CQ" scan --json
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq -r '.stacks[0].framework')" = "preact" ]
 }
 
 @test "scan detects ruby from Gemfile" {
@@ -51,8 +61,8 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "ruby" ]
-  [ "$(echo "$output" | jq -r '.stack.test_command')" = "bundle exec rspec" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "ruby" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].test_command')" = "bundle exec rspec" ]
 }
 
 @test "scan detects rails framework from Gemfile" {
@@ -64,9 +74,9 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "ruby" ]
-  [ "$(echo "$output" | jq -r '.stack.framework')" = "rails" ]
-  [ "$(echo "$output" | jq -r '.stack.lint_command')" = "bundle exec rubocop" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "ruby" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].framework')" = "rails" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].lint_command')" = "bundle exec rubocop" ]
 }
 
 @test "scan detects go from go.mod" {
@@ -77,8 +87,8 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "go" ]
-  [ "$(echo "$output" | jq -r '.stack.test_command')" = "go test ./..." ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "go" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].test_command')" = "go test ./..." ]
 }
 
 @test "scan detects rust from Cargo.toml" {
@@ -90,8 +100,8 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "rust" ]
-  [ "$(echo "$output" | jq -r '.stack.test_command')" = "cargo test" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "rust" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].test_command')" = "cargo test" ]
 }
 
 @test "scan detects python from pyproject.toml" {
@@ -103,9 +113,9 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "python" ]
-  [ "$(echo "$output" | jq -r '.stack.framework')" = "fastapi" ]
-  [ "$(echo "$output" | jq -r '.stack.test_command')" = "pytest" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "python" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].framework')" = "fastapi" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].test_command')" = "pytest" ]
 }
 
 @test "scan detects python from requirements.txt" {
@@ -115,8 +125,8 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "python" ]
-  [ "$(echo "$output" | jq -r '.stack.framework')" = "django" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "python" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].framework')" = "django" ]
 }
 
 @test "scan detects java from pom.xml" {
@@ -134,9 +144,9 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "java" ]
-  [ "$(echo "$output" | jq -r '.stack.framework')" = "spring" ]
-  [ "$(echo "$output" | jq -r '.stack.test_command')" = "mvn test" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "java" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].framework')" = "spring" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].test_command')" = "mvn test" ]
 }
 
 @test "scan detects elixir from mix.exs" {
@@ -149,9 +159,9 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "elixir" ]
-  [ "$(echo "$output" | jq -r '.stack.framework')" = "phoenix" ]
-  [ "$(echo "$output" | jq -r '.stack.test_command')" = "mix test" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "elixir" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].framework')" = "phoenix" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].test_command')" = "mix test" ]
 }
 
 @test "scan detects Makefile targets" {
@@ -168,31 +178,31 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.language')" = "makefile" ]
-  [ "$(echo "$output" | jq -r '.stack.test_command')" = "make test" ]
-  [ "$(echo "$output" | jq -r '.stack.build_command')" = "make build" ]
-  [ "$(echo "$output" | jq -r '.stack.lint_command')" = "make lint" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "makefile" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].test_command')" = "make test" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].build_command')" = "make build" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].lint_command')" = "make lint" ]
 }
 
-@test "scan returns stack object in JSON output" {
+@test "scan returns stacks array in JSON output" {
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  # stack key should exist even with no detected language
-  echo "$output" | jq -e '.stack' >/dev/null
+  # stacks key should exist even with no detected language
+  echo "$output" | jq -e '.stacks | type == "array"' >/dev/null
 }
 
-@test "scan stores stack in settings.json" {
+@test "scan stores stacks in settings.json" {
   cat > package.json <<'EOF'
 {"name": "test", "scripts": {"test": "jest"}}
 EOF
 
   run "$CQ" scan
   [ "$status" -eq 0 ]
-  [ "$(jq -r '.stack.language' .claudekiq/settings.json)" = "javascript" ]
-  [ "$(jq -r '.stack.test_command' .claudekiq/settings.json)" = "npm test" ]
+  [ "$(jq -r '.stacks[0].language' .claudekiq/settings.json)" = "javascript" ]
+  [ "$(jq -r '.stacks[0].test_command' .claudekiq/settings.json)" = "npm test" ]
 }
 
-@test "scan stack includes test_command when detectable" {
+@test "scan stacks includes test_command when detectable" {
   cat > Gemfile <<'EOF'
 source "https://rubygems.org"
 gem "sinatra"
@@ -200,7 +210,7 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.test_command')" = "bundle exec rspec" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].test_command')" = "bundle exec rspec" ]
 }
 
 @test "scan skips placeholder test scripts in package.json" {
@@ -210,7 +220,7 @@ EOF
 
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.stack.test_command // empty')" = "" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].test_command // empty')" = "" ]
 }
 
 @test "scan Makefile supplements language-specific detection" {
@@ -226,7 +236,85 @@ EOF
   run "$CQ" scan --json
   [ "$status" -eq 0 ]
   # Language comes from Gemfile, not Makefile
-  [ "$(echo "$output" | jq -r '.stack.language')" = "ruby" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].language')" = "ruby" ]
   # Build command comes from Makefile since Ruby didn't set one
-  [ "$(echo "$output" | jq -r '.stack.build_command')" = "make build" ]
+  [ "$(echo "$output" | jq -r '.stacks[0].build_command')" = "make build" ]
+}
+
+# --- Multi-stack detection ---
+
+@test "scan detects multiple stacks: rails + react" {
+  cat > Gemfile <<'EOF'
+source "https://rubygems.org"
+gem "rails"
+EOF
+  cat > package.json <<'EOF'
+{"name": "frontend", "dependencies": {"react": "18.0.0"}, "scripts": {"test": "jest", "build": "webpack"}}
+EOF
+
+  run "$CQ" scan --json
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq '.stacks | length')" -eq 2 ]
+
+  # JavaScript/React stack
+  local js_stack
+  js_stack=$(echo "$output" | jq '.stacks[] | select(.language == "javascript")')
+  [ "$(echo "$js_stack" | jq -r '.framework')" = "react" ]
+  [ "$(echo "$js_stack" | jq -r '.test_command')" = "npm test" ]
+
+  # Ruby/Rails stack
+  local rb_stack
+  rb_stack=$(echo "$output" | jq '.stacks[] | select(.language == "ruby")')
+  [ "$(echo "$rb_stack" | jq -r '.framework')" = "rails" ]
+  [ "$(echo "$rb_stack" | jq -r '.test_command')" = "bundle exec rspec" ]
+}
+
+@test "scan detects multiple stacks: python + typescript" {
+  cat > requirements.txt <<'EOF'
+django>=4.0
+EOF
+  cat > package.json <<'EOF'
+{"name": "frontend", "scripts": {"test": "vitest"}}
+EOF
+  echo '{}' > tsconfig.json
+
+  run "$CQ" scan --json
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq '.stacks | length')" -eq 2 ]
+
+  [ "$(echo "$output" | jq -r '.stacks[] | select(.language == "typescript") | .language')" = "typescript" ]
+  [ "$(echo "$output" | jq -r '.stacks[] | select(.language == "python") | .framework')" = "django" ]
+}
+
+@test "scan detects three stacks: go + ruby + javascript" {
+  cat > go.mod <<'EOF'
+module example.com/test
+go 1.21
+EOF
+  cat > Gemfile <<'EOF'
+source "https://rubygems.org"
+gem "sinatra"
+EOF
+  cat > package.json <<'EOF'
+{"name": "admin", "dependencies": {"vue": "3.0.0"}}
+EOF
+
+  run "$CQ" scan --json
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq '.stacks | length')" -eq 3 ]
+}
+
+@test "scan removes stale stack key on re-scan" {
+  # Write a stale singular "stack" key
+  jq '. + {"stack":{"language":"old"}}' .claudekiq/settings.json > .claudekiq/settings.json.tmp
+  mv .claudekiq/settings.json.tmp .claudekiq/settings.json
+
+  run "$CQ" scan
+  [ "$status" -eq 0 ]
+
+  # singular "stack" key should be removed
+  run jq -e '.stack' .claudekiq/settings.json
+  [ "$status" -ne 0 ]
+  # stacks array should exist
+  jq -e '.stacks | type == "array"' .claudekiq/settings.json
 }

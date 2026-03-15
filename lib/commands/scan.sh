@@ -4,12 +4,12 @@
 cmd_scan() {
   [[ -d "${CQ_PROJECT_ROOT}/.claudekiq" ]] || cq_die "Not a cq project. Run 'cq init' first."
 
-  local agents skills stack
+  local agents skills stacks
   agents=$(_scan_agents)
   skills=$(_scan_skills)
-  stack=$(_scan_stack)
+  stacks=$(_scan_stacks)
 
-  _merge_scan_results "$agents" "$skills" "$stack"
+  _merge_scan_results "$agents" "$skills" "$stacks"
 
   local ts
   ts=$(cq_now)
@@ -20,9 +20,9 @@ cmd_scan() {
   cq_json_out \
     --argjson agents "$agents" \
     --argjson skills "$skills" \
-    --argjson stack "$stack" \
+    --argjson stacks "$stacks" \
     --arg scanned_at "$ts" \
-    '{agents:$agents, skills:$skills, stack:$stack, scanned_at:$scanned_at}' || \
+    '{agents:$agents, skills:$skills, stacks:$stacks, scanned_at:$scanned_at}' || \
     cq_info "Scanned: ${agent_count} agent(s), ${skill_count} skill(s)"
 }
 
@@ -97,14 +97,17 @@ _scan_skills() {
   fi
 }
 
-_scan_stack() {
+# Detect all stacks in the project. Returns a JSON array of stack objects.
+# A project can have multiple stacks (e.g., Rails backend + React frontend).
+_scan_stacks() {
   local root="$CQ_PROJECT_ROOT"
-  local language="" framework="" test_command="" build_command="" lint_command=""
+  local -a items=()
 
-  # Detect language and framework from project files
+  # --- JavaScript / TypeScript ---
   if [[ -f "$root/package.json" ]]; then
-    language="javascript"
-    # Check if TypeScript
+    local language="javascript"
+    local framework="" test_command="" build_command="" lint_command=""
+
     if [[ -f "$root/tsconfig.json" ]]; then
       language="typescript"
     fi
@@ -123,13 +126,14 @@ _scan_stack() {
       framework="angular"
     elif echo "$deps" | grep -q '^svelte$'; then
       framework="svelte"
+    elif echo "$deps" | grep -q '^preact$'; then
+      framework="preact"
     fi
     # Detect commands from package.json scripts
     local scripts
     scripts=$(jq -r '.scripts // {} | keys[]' "$root/package.json" 2>/dev/null || true)
     if echo "$scripts" | grep -q '^test$'; then
       test_command=$(jq -r '.scripts.test' "$root/package.json" 2>/dev/null)
-      # Skip placeholder test commands
       if [[ "$test_command" == *"no test specified"* ]]; then
         test_command=""
       else
@@ -142,8 +146,12 @@ _scan_stack() {
     if echo "$scripts" | grep -q '^lint$'; then
       lint_command="npm run lint"
     fi
-  elif [[ -f "$root/Gemfile" ]]; then
-    language="ruby"
+    items+=("$(_build_stack_json "$language" "$framework" "$test_command" "$build_command" "$lint_command")")
+  fi
+
+  # --- Ruby ---
+  if [[ -f "$root/Gemfile" ]]; then
+    local language="ruby" framework="" test_command="" build_command="" lint_command=""
     local gemfile_content
     gemfile_content=$(cat "$root/Gemfile" 2>/dev/null || true)
     if echo "$gemfile_content" | grep -q "gem ['\"]rails['\"]"; then
@@ -156,19 +164,22 @@ _scan_stack() {
       test_command="bundle exec rspec"
     fi
     [[ -z "$test_command" ]] && test_command="bundle exec rspec"
-  elif [[ -f "$root/go.mod" ]]; then
-    language="go"
-    test_command="go test ./..."
-    build_command="go build ./..."
-    lint_command="golangci-lint run"
-  elif [[ -f "$root/Cargo.toml" ]]; then
-    language="rust"
-    test_command="cargo test"
-    build_command="cargo build"
-    lint_command="cargo clippy"
-  elif [[ -f "$root/pyproject.toml" ]] || [[ -f "$root/requirements.txt" ]]; then
-    language="python"
-    # Detect framework
+    items+=("$(_build_stack_json "$language" "$framework" "$test_command" "$build_command" "$lint_command")")
+  fi
+
+  # --- Go ---
+  if [[ -f "$root/go.mod" ]]; then
+    items+=("$(_build_stack_json "go" "" "go test ./..." "go build ./..." "golangci-lint run")")
+  fi
+
+  # --- Rust ---
+  if [[ -f "$root/Cargo.toml" ]]; then
+    items+=("$(_build_stack_json "rust" "" "cargo test" "cargo build" "cargo clippy")")
+  fi
+
+  # --- Python ---
+  if [[ -f "$root/pyproject.toml" ]] || [[ -f "$root/requirements.txt" ]]; then
+    local language="python" framework="" test_command="" build_command="" lint_command=""
     local py_content=""
     if [[ -f "$root/pyproject.toml" ]]; then
       py_content=$(cat "$root/pyproject.toml" 2>/dev/null || true)
@@ -190,8 +201,12 @@ _scan_stack() {
       lint_command="flake8"
     fi
     [[ -z "$test_command" ]] && test_command="pytest"
-  elif [[ -f "$root/pom.xml" ]] || [[ -f "$root/build.gradle" ]]; then
-    language="java"
+    items+=("$(_build_stack_json "$language" "$framework" "$test_command" "$build_command" "$lint_command")")
+  fi
+
+  # --- Java ---
+  if [[ -f "$root/pom.xml" ]] || [[ -f "$root/build.gradle" ]]; then
+    local language="java" framework="" test_command="" build_command="" lint_command=""
     local java_content=""
     if [[ -f "$root/pom.xml" ]]; then
       java_content=$(cat "$root/pom.xml" 2>/dev/null || true)
@@ -205,38 +220,67 @@ _scan_stack() {
     if echo "$java_content" | grep -qi 'spring'; then
       framework="spring"
     fi
-  elif [[ -f "$root/mix.exs" ]]; then
-    language="elixir"
+    items+=("$(_build_stack_json "$language" "$framework" "$test_command" "$build_command" "$lint_command")")
+  fi
+
+  # --- Elixir ---
+  if [[ -f "$root/mix.exs" ]]; then
+    local language="elixir" framework=""
     local mix_content
     mix_content=$(cat "$root/mix.exs" 2>/dev/null || true)
     if echo "$mix_content" | grep -qi 'phoenix'; then
       framework="phoenix"
     fi
-    test_command="mix test"
-    build_command="mix compile"
+    items+=("$(_build_stack_json "$language" "$framework" "mix test" "mix compile" "")")
   fi
 
-  # Fallback: detect Makefile targets if no language-specific commands found
-  if [[ -f "$root/Makefile" ]]; then
-    [[ -z "$language" ]] && language="makefile"
-    if [[ -z "$test_command" ]]; then
-      if grep -q '^test:' "$root/Makefile" 2>/dev/null; then
-        test_command="make test"
-      fi
-    fi
-    if [[ -z "$build_command" ]]; then
-      if grep -q '^build:' "$root/Makefile" 2>/dev/null; then
-        build_command="make build"
-      fi
-    fi
-    if [[ -z "$lint_command" ]]; then
-      if grep -q '^lint:' "$root/Makefile" 2>/dev/null; then
-        lint_command="make lint"
-      fi
-    fi
+  # --- Makefile fallback (only if no other stacks detected) ---
+  if [[ ${#items[@]} -eq 0 && -f "$root/Makefile" ]]; then
+    local test_command="" build_command="" lint_command=""
+    if grep -q '^test:' "$root/Makefile" 2>/dev/null; then test_command="make test"; fi
+    if grep -q '^build:' "$root/Makefile" 2>/dev/null; then build_command="make build"; fi
+    if grep -q '^lint:' "$root/Makefile" 2>/dev/null; then lint_command="make lint"; fi
+    items+=("$(_build_stack_json "makefile" "" "$test_command" "$build_command" "$lint_command")")
   fi
 
-  # Build JSON output, omitting empty fields
+  # --- Supplement stacks with Makefile targets ---
+  if [[ ${#items[@]} -gt 0 && -f "$root/Makefile" ]]; then
+    # Check each stack — if missing build_command, supplement from Makefile
+    local -a supplemented=()
+    local item
+    for item in "${items[@]}"; do
+      local has_build has_test has_lint
+      has_build=$(jq -r '.build_command // empty' <<< "$item")
+      has_test=$(jq -r '.test_command // empty' <<< "$item")
+      has_lint=$(jq -r '.lint_command // empty' <<< "$item")
+      local updates='{}'
+      if [[ -z "$has_build" ]] && grep -q '^build:' "$root/Makefile" 2>/dev/null; then
+        updates=$(jq -cn --arg v "make build" '{build_command:$v}')
+      fi
+      if [[ -z "$has_test" ]] && grep -q '^test:' "$root/Makefile" 2>/dev/null; then
+        updates=$(jq -cn --argjson u "$updates" --arg v "make test" '$u + {test_command:$v}')
+      fi
+      if [[ -z "$has_lint" ]] && grep -q '^lint:' "$root/Makefile" 2>/dev/null; then
+        updates=$(jq -cn --argjson u "$updates" --arg v "make lint" '$u + {lint_command:$v}')
+      fi
+      if [[ "$updates" != '{}' ]]; then
+        item=$(jq --argjson u "$updates" '. + $u' <<< "$item")
+      fi
+      supplemented+=("$item")
+    done
+    items=("${supplemented[@]}")
+  fi
+
+  if [[ ${#items[@]} -gt 0 ]]; then
+    printf '%s\n' "${items[@]}" | jq -s '.'
+  else
+    echo '[]'
+  fi
+}
+
+# Helper: build a stack JSON object, omitting empty fields
+_build_stack_json() {
+  local language="$1" framework="$2" test_command="$3" build_command="$4" lint_command="$5"
   jq -cn \
     --arg language "$language" \
     --arg framework "$framework" \
@@ -269,7 +313,7 @@ _extract_frontmatter() {
 }
 
 _merge_scan_results() {
-  local agents="$1" skills="$2" stack="${3:-"{}"}"
+  local agents="$1" skills="$2" stacks="${3:-"[]"}"
   local settings_file="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
   local ts
   ts=$(cq_now)
@@ -283,9 +327,9 @@ _merge_scan_results() {
   updated=$(jq \
     --argjson agents "$agents" \
     --argjson skills "$skills" \
-    --argjson stack "$stack" \
+    --argjson stacks "$stacks" \
     --arg ts "$ts" \
-    '. + {agents: $agents, skills: $skills, stack: $stack, scanned_at: $ts} | del(.plugins)' \
+    '. + {agents: $agents, skills: $skills, stacks: $stacks, scanned_at: $ts} | del(.plugins) | del(.stack)' \
     <<< "$existing")
 
   echo "$updated" > "$settings_file"

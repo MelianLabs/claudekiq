@@ -17,8 +17,8 @@ Available workflows:
 Active runs:
 `!cq list --json 2>/dev/null || echo "[]"`
 
-Project inventory (agents, skills):
-`!jq '{agents: (.agents // []) | map(.name), skills: (.skills // []) | map(.name)}' .claudekiq/settings.json 2>/dev/null || echo "{}"`
+Project inventory (agents, skills, stacks):
+`!jq '{agents: (.agents // []) | map(.name), skills: (.skills // []) | map(.name), stacks: (.stacks // []) | map({language, framework})}' .claudekiq/settings.json 2>/dev/null || echo "{}"`
 
 ## Invocation
 

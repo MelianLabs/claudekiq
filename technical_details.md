@@ -65,8 +65,6 @@ Uninstall: `rm -rf ~/.cq` and remove the PATH entry.
       manifest.json         # Session metadata
       <job_id>.status.json  # Written by child worker
       <job_id>.answer.json  # Written by parent (gate responses)
-  plugins/                  # Custom step type handlers (optional)
-    docker.sh
 ```
 
 ### Gitignore
@@ -188,7 +186,7 @@ steps:
   - id: implement
     name: Implement
     type: agent
-    target: "@implementer"           # spawns specific agent
+    target: "@rails-dev"              # spawns stack-specific agent
     prompt: "Implement the plan. All tests must pass."
     context: [description, plan_output]
     gate: review

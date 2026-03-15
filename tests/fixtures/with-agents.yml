@@ -27,7 +27,7 @@ steps:
   - id: implement
     name: Implement
     type: agent
-    target: "@implementer"
+    target: "@rails-dev"
     prompt: "Implement the plan. All tests must pass."
     context: [description]
     gate: review

@@ -1,12 +1,12 @@
 ---
 name: cq-setup
-description: "Smart project setup — scans agents/skills/stack and generates customized workflows based on your project. Use /cq-setup after cq init."
+description: "Smart project setup — scans agents/skills/stacks and generates customized workflows based on your project. Use /cq-setup after cq init."
 allowed-tools: Bash, Read, Glob, Grep, Write, AskUserQuestion
 ---
 
 # Claudekiq Smart Setup
 
-You generate customized cq workflows based on the project's actual agents, skills, and detected stack.
+You generate customized cq workflows based on the project's actual agents, skills, and detected stacks.
 
 ## Step 1: Scan the Project
 
@@ -19,15 +19,14 @@ cq scan --json
 This returns:
 - `.agents[]` — available Claude agents (name, model, tools, description)
 - `.skills[]` — available skills (name, description, tools)
-- `.plugins[]` — available bash plugins
-- `.stack` — detected language, framework, and commands:
-  - `.stack.language` — e.g. javascript, typescript, ruby, python, go, rust, java, elixir
-  - `.stack.framework` — e.g. next, react, rails, django, fastapi, spring, phoenix
-  - `.stack.test_command` — e.g. "npm test", "bundle exec rspec", "pytest"
-  - `.stack.build_command` — e.g. "npm run build", "cargo build"
-  - `.stack.lint_command` — e.g. "npm run lint", "bundle exec rubocop"
+- `.stacks[]` — detected stacks (a project can have multiple):
+  - `.stacks[].language` — e.g. javascript, typescript, ruby, python, go, rust, java, elixir
+  - `.stacks[].framework` — e.g. next, react, preact, rails, django, fastapi, spring, phoenix
+  - `.stacks[].test_command` — e.g. "npm test", "bundle exec rspec", "pytest"
+  - `.stacks[].build_command` — e.g. "npm run build", "cargo build"
+  - `.stacks[].lint_command` — e.g. "npm run lint", "bundle exec rubocop"
 
-Use the stack data to generate workflows with real commands rather than placeholders.
+Use the stacks data to generate workflows with real commands rather than placeholders.
 
 ## Step 2: Ask the User
 
@@ -41,6 +40,8 @@ Use AskUserQuestion to ask:
 > - **release** — Version bump, test, tag, push
 >
 > You can choose multiple (comma-separated), or describe a custom workflow.
+
+If the project has multiple stacks, also ask which stack(s) the workflows should target, or generate workflows that cover all detected stacks.
 
 ## Step 3: Generate Workflows
 
@@ -74,10 +75,9 @@ steps:
   - id: <agent-step-id>
     name: <Human-readable Name>
     type: agent
-    target: "@agent-name"
-    prompt: "Describe what the agent should do. Reference {{params.branch_name}} or {{context.key}}."
-    context:
-      some_input: "{{previous_step.output}}"
+    target: "@<stack>-dev"
+    prompt: "Describe what the agent should do."
+    context: [description]
     model: sonnet
     gate: auto
     on_pass: <next-step-id>
@@ -99,13 +99,14 @@ steps:
 
 ### Rules for Generation
 
-1. **Use detected stack commands** — If `stack.test_command` is "npm test", use that in bash steps instead of a generic placeholder. Same for build and lint commands.
-2. **Reference actual agents** — Use `@agent-name` targets matching agents from scan results. If no specialized agent exists, omit `target` so the runner itself handles it.
-3. **Use `prompt` for agent/skill steps** — The `prompt` field describes what the agent should do. Use `{{variable}}` interpolation to inject context.
-4. **Use `params` for workflow parameters** — Document required inputs at the top level. Reference them as `{{params.name}}` in prompts and targets.
-5. **Set appropriate gates** — `human` for risky steps (deploy, commit, push), `review` for tests with retry, `auto` for safe steps.
-6. **Test-fix loops** — Use `review` gate with `max_visits: 3`, `on_fail` pointing to a fix step, fix step pointing back to test.
-7. **Timeouts** — Add `timeout: 300` (seconds) for steps that might hang.
+1. **Use detected stack commands** — If `stacks[0].test_command` is "npm test", use that in bash steps instead of a generic placeholder. Same for build and lint commands.
+2. **Name agents after their stack** — Use `@<framework>-dev` or `@<language>-dev` targets (e.g., `@rails-dev`, `@react-dev`, `@go-dev`). This naming convention makes agent purpose clear. If no specialized agent exists, omit `target` so the runner itself handles it.
+3. **Multi-stack workflows** — If the project has multiple stacks (e.g., Rails + React), generate steps that test/build each stack. Use the specific stack's commands for each step.
+4. **Use `prompt` for agent/skill steps** — The `prompt` field describes what the agent should do. Agent steps receive raw prompts (no interpolation).
+5. **Use `params` for workflow parameters** — Document required inputs at the top level.
+6. **Set appropriate gates** — `human` for risky steps (deploy, commit, push), `review` for tests with retry, `auto` for safe steps.
+7. **Test-fix loops** — Use `review` gate with `max_visits: 3`, `on_fail` pointing to a fix step, fix step pointing back to test.
+8. **Timeouts** — Add `timeout: 300` (seconds) for steps that might hang.
 
 ## Step 4: Validate
 
@@ -120,6 +121,6 @@ Fix any issues.
 
 Tell the user what was created and how to use it:
 - List the generated workflows with descriptions
-- Mention the detected stack (language, framework, commands) that was used
+- Mention the detected stacks (languages, frameworks, commands) that were used
 - Show example invocations: `/cq <workflow>` or `cq start <workflow>`
 - Mention they can customize the YAML files directly

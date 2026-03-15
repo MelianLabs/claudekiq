@@ -61,9 +61,9 @@ cq init
 This creates:
 - `.claudekiq/` — project directory (workflows, settings, runs)
 - `.claudekiq/workflows/` — where you put workflow YAML files
-- `.claude/skills/cq/SKILL.md` — the Claude Code runner skill
+- `.claude-plugin/plugin.json` — plugin manifest pointing to `~/.cq/skills/`
 
-It also auto-scans for agents, skills, and plugins (`cq scan`), and adds run data to `.gitignore`.
+It also auto-scans for agents, skills, and stacks (`cq scan`), and adds run data to `.gitignore`.
 
 After init, run `/cq-setup` inside Claude Code to generate customized workflows based on your project's agents and stack.
 
@@ -97,8 +97,8 @@ steps:
   - id: fix-tests
     name: Fix Failing Tests
     type: agent
-    target: "@dev"
-    args_template: "Fix the failing tests. Run npm test to see what's broken."
+    target: "@node-dev"
+    prompt: "Fix the failing tests. Run npm test to see what's broken."
     gate: auto
     next: test
 
@@ -223,7 +223,7 @@ Context is populated from:
 
 ## The `/cq` Skill
 
-When you run `cq init`, it installs a Claude Code skill at `.claude/skills/cq/SKILL.md`. This skill has three modes:
+When you run `cq init`, it creates `.claude-plugin/plugin.json` pointing to the skills in `~/.cq/skills/`. The `/cq` skill has three modes:
 
 ### `/cq` — Interactive picker
 
@@ -404,7 +404,7 @@ Meanwhile, `/cq status` tracked progress from another session:
 | Command | Description |
 |---------|-------------|
 | `cq init` | Initialize cq in a project |
-| `cq scan` | Discover agents, skills, and plugins |
+| `cq scan` | Discover agents, skills, and stacks |
 | `cq config` | Show resolved configuration |
 | `cq config get <key>` | Get a config value |
 | `cq config set <key> <value>` | Set a project config value |
@@ -516,64 +516,56 @@ Project settings override global. You can set:
     private/               # Private workflows (gitignored)
   runs/                    # Run state (gitignored)
   workers/                 # Worker session coordination (gitignored)
-  plugins/                 # Custom step type handlers (bash scripts)
-.claude/skills/cq/         # Claude Code runner skill (committed)
-  SKILL.md                 # Skill definition
-.claude/skills/cq-workers/ # Parallel workers skill (committed)
-  SKILL.md                 # Skill definition
-.claude/skills/cq-setup/   # Smart workflow generation skill (committed)
-  SKILL.md                 # Skill definition
+.claude-plugin/
+  plugin.json              # Plugin manifest (points to ~/.cq/skills/)
 ```
 
 ## Discovery & Scanning
 
-After initializing, run `cq scan` to discover available agents, skills, and plugins in your project:
+After initializing, run `cq scan` to discover available agents, skills, and project stacks:
 
 ```bash
 cq scan
-# Scanned: 5 agent(s), 2 skill(s), 1 plugin(s)
+# Scanned: 5 agent(s), 2 skill(s)
 
 cq scan --json
-# {"agents":[...],"skills":[...],"plugins":[...],"scanned_at":"..."}
+# {"agents":[...],"skills":[...],"stacks":[...],"scanned_at":"..."}
 ```
 
 Scan results are stored in `.claudekiq/settings.json` alongside your project config. The `/cq` runner uses this inventory to resolve custom step types and display available agents.
 
-## Plugins (Custom Step Types)
+### Multi-Stack Detection
 
-Define custom step types backed by agents or bash scripts. When a workflow step has a type that isn't built-in (bash, agent, skill, etc.), cq resolves it:
+Projects with multiple technology stacks (e.g., Rails backend + React frontend) are fully supported. `cq scan` detects all stacks and returns them as an array:
 
-1. **Agent-backed**: `.claude/agents/<type>.md` — the type maps to a Claude Code agent
-2. **Bash plugin**: `.claudekiq/plugins/<type>.sh` — a script that follows the JSON protocol
-
-### Bash Plugin Protocol
-
-Create an executable script at `.claudekiq/plugins/<type>.sh`:
-
-```bash
-#!/usr/bin/env bash
-# Receives step JSON on stdin
-input=$(cat)
-step_id=$(echo "$input" | jq -r '.id')
-
-# Do your work here...
-
-# Output result JSON on stdout
-echo '{"status":"pass","output":{"deployed":true}}'
-exit 0  # 0=pass, non-zero=fail
+```json
+{
+  "stacks": [
+    {"language": "ruby", "framework": "rails", "test_command": "bundle exec rspec"},
+    {"language": "javascript", "framework": "react", "test_command": "npm test"}
+  ]
+}
 ```
 
-Use it in a workflow:
+### Agent Naming Convention
+
+Name agents after their stack: `@rails-dev`, `@react-dev`, `@go-dev`, etc. This makes agent purpose clear in workflows:
 
 ```yaml
-steps:
-  - id: deploy
-    type: deploy    # matches .claudekiq/plugins/deploy.sh
-    target: "staging"
-    gate: human
+- id: fix-backend
+  type: agent
+  target: "@rails-dev"
+  prompt: "Fix the failing API tests."
+
+- id: fix-frontend
+  type: agent
+  target: "@react-dev"
+  prompt: "Fix the component rendering issue."
 ```
 
-Run `cq scan` after adding plugins so cq discovers them.
+## Custom Step Types
+
+Define custom step types backed by agent definitions. When a workflow step has a type that isn't built-in (bash, agent, skill, etc.), cq resolves it by checking `.claude/agents/<type>.md` or the scan results.
 
 ## Parallel Workers (`/cq-workers`)
 

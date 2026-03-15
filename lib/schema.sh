@@ -437,11 +437,11 @@ JSON
       cat <<'JSON'
 {
   "command": "scan",
-  "description": "Scan project for available agents, skills, and stack info. Writes results to .claudekiq/settings.json",
+  "description": "Scan project for available agents, skills, and stacks. Writes results to .claudekiq/settings.json",
   "usage": "cq scan",
   "positional": [],
   "parameters": [],
-  "output": {"agents": "array", "skills": "array", "stack": "object", "scanned_at": "string"},
+  "output": {"agents": "array", "skills": "array", "stacks": "array of stack objects", "scanned_at": "string"},
   "flags": ["--json"],
   "examples": ["cq scan", "cq scan --json"]
 }
