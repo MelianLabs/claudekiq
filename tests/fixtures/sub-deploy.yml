@@ -1,0 +1,18 @@
+name: sub-deploy
+description: Simple deploy sub-workflow
+
+defaults:
+  deploy_url: ""
+
+steps:
+  - id: build
+    name: Build
+    type: bash
+    target: "echo build"
+    gate: auto
+
+  - id: deploy
+    name: Deploy
+    type: bash
+    target: "echo deploy"
+    gate: auto

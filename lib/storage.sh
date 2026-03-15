@@ -158,8 +158,147 @@ cq_init_step_state() {
   local state
   state=$(cq_read_json "${run_dir}/state.json")
   state=$(jq --arg id "$step_id" \
-    '.[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null}' <<< "$state")
+    '.[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null,"files":[]}' <<< "$state")
   cq_write_json "${run_dir}/state.json" "$state"
+}
+
+# --- Parallel step state ---
+
+# Initialize branch state for a parallel step
+cq_parallel_init_state() {
+  local run_id="$1" step_id="$2" branches_json="$3"
+  local run_dir
+  run_dir=$(cq_run_dir "$run_id")
+  local state
+  state=$(cq_read_json "${run_dir}/state.json")
+
+  # Build branches state from branches definition array
+  local branches_state
+  branches_state=$(jq '[.[] | {key: .id, value: {"status":"pending","result":null}}] | from_entries' <<< "$branches_json")
+
+  state=$(jq --arg id "$step_id" --argjson branches "$branches_state" \
+    '.[$id].branches = $branches' <<< "$state")
+  cq_write_json "${run_dir}/state.json" "$state"
+}
+
+# Bulk-update all branches from results (called after /batch completes)
+# results_json: {"branch_id": {"status": "passed"|"failed", "result": "pass"|"fail"}, ...}
+cq_parallel_complete() {
+  local run_id="$1" step_id="$2" results_json="$3"
+  local run_dir
+  run_dir=$(cq_run_dir "$run_id")
+
+  cq_with_lock "$run_dir" _cq_parallel_complete_locked "$run_dir" "$step_id" "$results_json"
+}
+
+_cq_parallel_complete_locked() {
+  local run_dir="$1" step_id="$2" results_json="$3"
+  local state
+  state=$(cq_read_json "${run_dir}/state.json")
+  local ts
+  ts=$(cq_now)
+
+  # Update each branch from results
+  state=$(jq --arg id "$step_id" --argjson results "$results_json" --arg ts "$ts" '
+    .[$id].branches = (.[$id].branches // {} |
+      reduce ($results | to_entries[]) as $r (
+        .; .[$r.key] = (.[$r.key] // {}) + $r.value
+      )
+    )
+  ' <<< "$state")
+
+  # Determine overall outcome: pass only if ALL branches passed
+  local all_passed
+  all_passed=$(jq --arg id "$step_id" '
+    [.[$id].branches | to_entries[] | .value.result] | all(. == "pass")
+  ' <<< "$state")
+
+  local overall_result="fail"
+  local overall_status="failed"
+  if [[ "$all_passed" == "true" ]]; then
+    overall_result="pass"
+    overall_status="passed"
+  fi
+
+  state=$(jq --arg id "$step_id" --arg status "$overall_status" --arg result "$overall_result" --arg ts "$ts" '
+    .[$id].status = $status | .[$id].result = $result | .[$id].finished_at = $ts |
+    .[$id].visits = ((.[$id].visits // 0) + 1)
+  ' <<< "$state")
+
+  cq_write_json "${run_dir}/state.json" "$state"
+  echo "$overall_result"
+}
+
+# --- Sub-workflow linkage ---
+
+# Get child run IDs for a parent run
+cq_child_run_ids() {
+  local parent_run_id="$1"
+  local meta
+  meta=$(cq_read_meta "$parent_run_id" 2>/dev/null) || return 0
+  jq -r '.children // [] | .[].run_id' <<< "$meta"
+}
+
+# Get parent run info for a child run
+# Returns JSON: {"parent_run_id": "...", "parent_step_id": "..."}
+cq_parent_run() {
+  local child_run_id="$1"
+  local meta
+  meta=$(cq_read_meta "$child_run_id" 2>/dev/null) || return 1
+  local parent_run_id
+  parent_run_id=$(jq -r '.parent_run_id // empty' <<< "$meta")
+  [[ -z "$parent_run_id" ]] && return 1
+  jq -c '{parent_run_id: .parent_run_id, parent_step_id: .parent_step_id}' <<< "$meta"
+}
+
+# Copy context from parent to child using context_map
+cq_copy_context_map() {
+  local parent_run_id="$1" child_run_id="$2" context_map_json="$3"
+  local parent_ctx
+  parent_ctx=$(cq_read_ctx "$parent_run_id")
+
+  # Resolve each mapping: key -> expression (may contain {{}} interpolation)
+  local child_ctx="{}"
+  local key value resolved
+  while IFS= read -r key; do
+    [[ -z "$key" ]] && continue
+    value=$(jq -r --arg k "$key" '.[$k]' <<< "$context_map_json")
+    resolved=$(cq_interpolate "$value" "$parent_ctx")
+    child_ctx=$(jq --arg k "$key" --arg v "$resolved" '.[$k] = $v' <<< "$child_ctx")
+  done <<< "$(jq -r 'keys[]' <<< "$context_map_json")"
+
+  local child_run_dir
+  child_run_dir=$(cq_run_dir "$child_run_id")
+  cq_write_json "${child_run_dir}/ctx.json" "$child_ctx"
+}
+
+# Copy outputs from child back to parent context under namespace
+cq_copy_outputs_back() {
+  local parent_run_id="$1" child_run_id="$2" step_id="$3" outputs_json="$4"
+  local child_ctx
+  child_ctx=$(cq_read_ctx "$child_run_id")
+  local parent_run_dir
+  parent_run_dir=$(cq_run_dir "$parent_run_id")
+
+  if [[ "$outputs_json" != "null" && "$outputs_json" != "{}" && -n "$outputs_json" ]]; then
+    # Explicit output mapping: {parent_key: child_key}
+    local parent_key child_key value
+    while IFS= read -r parent_key; do
+      [[ -z "$parent_key" ]] && continue
+      child_key=$(jq -r --arg k "$parent_key" '.[$k]' <<< "$outputs_json")
+      value=$(jq -r --arg k "$child_key" '.[$k] // empty' <<< "$child_ctx")
+      [[ -n "$value" ]] && cq_ctx_set "$parent_run_id" "sub_${step_id}.${parent_key}" "$value"
+    done <<< "$(jq -r 'keys[]' <<< "$outputs_json")"
+  else
+    # No explicit mapping: copy entire child context under sub_<step_id>
+    local key value
+    while IFS= read -r key; do
+      [[ -z "$key" ]] && continue
+      [[ "$key" == _* ]] && continue  # Skip internal keys
+      value=$(jq -r --arg k "$key" '.[$k] // empty' <<< "$child_ctx")
+      [[ -n "$value" ]] && cq_ctx_set "$parent_run_id" "sub_${step_id}.${key}" "$value"
+    done <<< "$(jq -r 'keys[]' <<< "$child_ctx")"
+  fi
 }
 
 # --- Run listing ---
@@ -446,4 +585,141 @@ cq_update_todo() {
   todo=$(cat "$todo_file")
   todo=$(jq --arg s "$new_status" '.status = $s' <<< "$todo")
   cq_write_json "$todo_file" "$todo"
+}
+
+# --- TODO sync (bidirectional with Claude Code native TodoRead/TodoWrite) ---
+
+# Read sync state for a run
+cq_todo_sync_state() {
+  local run_id="$1"
+  local sync_file
+  sync_file="$(cq_run_dir "$run_id")/todos/.sync_state.json"
+  if [[ -f "$sync_file" ]]; then
+    cat "$sync_file"
+  else
+    echo '{"last_sync":null,"synced_todos":{}}'
+  fi
+}
+
+# Write sync state for a run
+cq_todo_sync_state_set() {
+  local run_id="$1" data="$2"
+  local todo_dir
+  todo_dir="$(cq_run_dir "$run_id")/todos"
+  mkdir -p "$todo_dir"
+  cq_write_json "${todo_dir}/.sync_state.json" "$data"
+}
+
+# Convert all pending TODOs to native TodoWrite-compatible format
+# Returns JSON: {todos: [...], run_ids: [...]}
+cq_todos_as_native_format() {
+  local filter_run="${1:-}"
+  local run_id todo_file todo_json
+  local -a native_items=()
+  local -a seen_runs=()
+
+  for run_id in $(cq_run_ids); do
+    [[ -n "$filter_run" && "$run_id" != "$filter_run" ]] && continue
+    local todo_dir
+    todo_dir="$(cq_run_dir "$run_id")/todos"
+    [[ -d "$todo_dir" ]] || continue
+
+    local has_todos=false
+    for todo_file in "$todo_dir"/*.json; do
+      [[ -f "$todo_file" ]] || continue
+      [[ "$(basename "$todo_file")" == ".sync_state.json" ]] && continue
+      todo_json=$(cat "$todo_file")
+      local status
+      status=$(jq -r '.status' <<< "$todo_json")
+      [[ "$status" != "pending" ]] && continue
+
+      has_todos=true
+      local native
+      native=$(jq -c '{
+        id: .id,
+        content: ("[cq] " + (.step_name // .step_id) + " — " + .action),
+        status: "pending",
+        priority: .priority,
+        metadata: {run_id: .run_id, step_id: .step_id, todo_id: .id, action: .action, description: (.description // "")}
+      }' <<< "$todo_json")
+      native_items+=("$native")
+    done
+    [[ "$has_todos" == "true" ]] && seen_runs+=("\"${run_id}\"")
+  done
+
+  local todos_json="[]"
+  if [[ ${#native_items[@]} -gt 0 ]]; then
+    todos_json=$(printf '%s\n' "${native_items[@]}" | jq -s '.')
+  fi
+
+  local runs_json="[]"
+  if [[ ${#seen_runs[@]} -gt 0 ]]; then
+    runs_json=$(IFS=,; echo "[${seen_runs[*]}]")
+  fi
+
+  jq -cn --argjson todos "$todos_json" --argjson runs "$runs_json" \
+    '{todos: $todos, run_ids: $runs}'
+}
+
+# Apply sync resolutions from native system back to filesystem
+# Input JSON: {resolutions: [{todo_id: "...", run_id: "...", action: "approve|reject|dismiss"}]}
+cq_todos_apply_sync() {
+  local input="$1"
+  local count applied=0
+
+  count=$(jq '.resolutions | length' <<< "$input")
+  [[ "$count" -eq 0 ]] && { echo '{"applied":0}'; return 0; }
+
+  local i
+  for ((i = 0; i < count; i++)); do
+    local resolution
+    resolution=$(jq --argjson i "$i" '.resolutions[$i]' <<< "$input")
+    local todo_id run_id action
+    todo_id=$(jq -r '.todo_id' <<< "$resolution")
+    run_id=$(jq -r '.run_id' <<< "$resolution")
+    action=$(jq -r '.action // "dismiss"' <<< "$resolution")
+
+    local todo_file
+    todo_file="$(cq_run_dir "$run_id")/todos/${todo_id}.json"
+    [[ -f "$todo_file" ]] || continue
+
+    local current_status
+    current_status=$(jq -r '.status' < "$todo_file")
+    [[ "$current_status" != "pending" ]] && continue
+
+    case "$action" in
+      approve|override)
+        cq_update_todo "$run_id" "$todo_id" "done"
+        applied=$((applied + 1))
+        ;;
+      reject)
+        cq_update_todo "$run_id" "$todo_id" "done"
+        applied=$((applied + 1))
+        ;;
+      dismiss)
+        cq_update_todo "$run_id" "$todo_id" "dismissed"
+        applied=$((applied + 1))
+        ;;
+    esac
+  done
+
+  jq -cn --argjson n "$applied" '{applied: $n}'
+}
+
+# Update sync state after a sync cycle
+cq_todo_mark_synced() {
+  local run_id="$1"
+  local todos_json="$2"  # array of {id, native_id} pairs
+  local ts
+  ts=$(cq_now)
+
+  local sync_state
+  sync_state=$(cq_todo_sync_state "$run_id")
+  sync_state=$(jq --arg ts "$ts" --argjson todos "$todos_json" '
+    .last_sync = $ts |
+    reduce ($todos[] | {key: .id, value: {status: "synced", native_id: (.native_id // ""), synced_at: $ts}}) as $item (
+      .; .synced_todos[$item.key] = $item.value
+    )
+  ' <<< "$sync_state")
+  cq_todo_sync_state_set "$run_id" "$sync_state"
 }

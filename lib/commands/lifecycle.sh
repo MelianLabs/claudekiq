@@ -3,11 +3,14 @@
 
 cmd_start() {
   local template="" priority="" ctx_vars=()
+  local parent_run_id="" parent_step_id=""
 
   # Parse args
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --priority=*) priority="${1#*=}" ;;
+      --parent=*)   parent_run_id="${1#*=}" ;;
+      --parent-step=*) parent_step_id="${1#*=}" ;;
       --headless)   CQ_HEADLESS="true"; CQ_JSON="true" ;;
       --*)
         local key="${1#--}"
@@ -100,6 +103,17 @@ cmd_start() {
       created_at:$created_at, updated_at:$updated_at,
       current_step:$current_step, started_by:$started_by}
       + (if $params != null then {params:$params} else {} end)')
+
+  # Add parent linkage for sub-workflows
+  if [[ -n "$parent_run_id" ]]; then
+    meta=$(jq --arg prid "$parent_run_id" --arg psid "$parent_step_id" \
+      '. + {parent_run_id: $prid, parent_step_id: $psid}' <<< "$meta")
+    # Register child in parent meta
+    cq_update_meta "$parent_run_id" \
+      '.children = ((.children // []) + [{"run_id": $crid, "step_id": $csid, "template": $ctpl}])' \
+      --arg crid "$run_id" --arg csid "$parent_step_id" --arg ctpl "$template"
+  fi
+
   cq_write_json "${run_dir}/meta.json" "$meta"
 
   # Write ctx.json
@@ -115,9 +129,21 @@ cmd_start() {
   local step_id
   for step_id in $(jq -r '.[].id' <<< "$steps"); do
     state=$(jq --arg id "$step_id" \
-      '.[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null}' <<< "$state")
+      '.[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null,"files":[]}' <<< "$state")
   done
   cq_write_json "${run_dir}/state.json" "$state"
+
+  # Initialize parallel step branch state
+  local step_type branches_json
+  for step_id in $(jq -r '.[].id' <<< "$steps"); do
+    step_type=$(jq -r --arg id "$step_id" '.[] | select(.id == $id) | .type' <<< "$steps")
+    if [[ "$step_type" == "parallel" ]]; then
+      branches_json=$(jq -r --arg id "$step_id" '.[] | select(.id == $id) | .branches // []' <<< "$steps")
+      if [[ "$branches_json" != "[]" && "$branches_json" != "null" ]]; then
+        cq_parallel_init_state "$run_id" "$step_id" "$branches_json"
+      fi
+    fi
+  done
 
   # Initialize log
   touch "${run_dir}/log.jsonl"

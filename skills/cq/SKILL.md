@@ -2,7 +2,7 @@
 name: cq
 description: "Claudekiq workflow runner — orchestrates multi-step development workflows. Use /cq to list and run workflows, /cq <workflow> to start a specific one, or /cq status to monitor all jobs."
 argument-hint: "[workflow] [--key=val...]"
-allowed-tools: Bash, Read, Agent, Skill, TaskCreate, TaskUpdate, CronCreate, CronDelete, AskUserQuestion
+allowed-tools: Bash, Read, Agent, Skill, TaskCreate, TaskUpdate, TodoRead, TodoWrite, CronCreate, CronDelete, AskUserQuestion
 ---
 
 # Claudekiq Workflow Runner
@@ -101,6 +101,27 @@ The sub-skill handles prompt assembly, model selection, agent spawning, heartbea
 #### `skill`
 Invoke the Skill tool with the target skill name and interpolated arguments.
 
+#### `parallel`
+Delegates to Claude Code's built-in `/batch` skill for concurrent execution:
+1. Read `branches` array from step definition
+2. Convert each branch into a batch item prompt describing its type + target/prompt
+3. Invoke: `Skill("batch", "<description of all branches to run>")`
+4. When `/batch` completes, map results back to branch outcomes
+5. Build branches result JSON: `{"branch_id": {"status": "passed"|"failed", "result": "pass"|"fail"}, ...}`
+6. Call: `cq step-done <run_id> <step_id> pass|fail --branches='<branches_json>'`
+7. Wait-all semantics: step passes only if ALL branches passed
+
+Store branch results in context under `<parallel_step_id>.<branch_id>` namespace.
+
+#### `workflow` (sub-workflow)
+Starts a child workflow with inherited context:
+1. Read `template`, `context_map`, and `outputs` from step definition
+2. Build context args from `context_map` (interpolated from parent context)
+3. Start child: `cq start <template> --parent=<run_id> --parent-step=<step_id> --key=val... --json`
+4. Enter a nested runner loop for the child workflow (same logic as main runner)
+5. On child completion, outputs are auto-copied back to parent context under `sub_<step_id>.<key>`
+6. The parent step is auto-completed when the child finishes
+
 #### Convention-based type (any custom name)
 For any type not listed above (e.g., `review`, `deploy`, `migrate`), treat it as an agent step. The type name provides semantic context for the agent. Dispatch to `/cq-agent` with the type name included in the prompt context.
 
@@ -126,6 +147,29 @@ Re-read status. The `cq step-done` command handles gate logic internally:
 - **review (fail)** → under max_visits routes via `on_fail`; at max_visits creates TODO
 
 Return to step 1.
+
+## TODO Sync (Bidirectional with Native System)
+
+The filesystem is the **source of truth** for TODOs. Sync with Claude Code's native `TodoRead`/`TodoWrite` for in-session visibility.
+
+### On Session Start (before entering runner loop)
+1. Run: `cq todos sync --json` — get all pending TODOs in native format
+2. For each TODO in the response, call `TodoWrite` to create/update it in the native system:
+   - `TodoWrite(todos: [{id: "<todo_id>", content: "<content>", status: "in_progress", priority: "<priority>"}])`
+3. This ensures any cross-session TODOs from previous runs are visible immediately
+
+### On Gate Event (when run becomes `gated`)
+1. After `cq todos --json` lists the new TODO:
+   - Call `TodoWrite` to push the new TODO to native: `TodoWrite(todos: [{id: "<todo_id>", content: "[cq] <step_name> — <action>", status: "in_progress", priority: "<priority>"}])`
+2. After user resolves via `AskUserQuestion` and `cq todo <#> approve|reject`:
+   - Call `TodoWrite` to mark native TODO as completed: `TodoWrite(todos: [{id: "<todo_id>", status: "completed"}])`
+
+### On Workflow Completion
+1. Call `TodoRead` to check for any lingering native TODOs for this workflow
+2. Mark all as completed via `TodoWrite`
+
+### Conflict Resolution
+- Filesystem always wins. If a TODO was resolved in the filesystem (via CLI or another session), the native TODO is updated to match on next sync.
 
 ## Task Mirroring
 

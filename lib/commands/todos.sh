@@ -3,6 +3,14 @@
 
 cmd_todos() {
   local filter_run=""
+  local subcommand=""
+
+  # Check if first arg is a subcommand
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      sync|apply-sync) subcommand="$1"; shift ;;
+    esac
+  fi
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -11,6 +19,17 @@ cmd_todos() {
     esac
     shift
   done
+
+  case "$subcommand" in
+    sync)
+      _todos_sync "$filter_run"
+      return
+      ;;
+    apply-sync)
+      _todos_apply_sync
+      return
+      ;;
+  esac
 
   local todos
   todos=$(cq_list_todos "$filter_run")
@@ -32,6 +51,53 @@ cmd_todos() {
         [[ -n "$description" ]] && printf "       %s\n" "$description"
         printf "       run: %s\n" "$run_id"
       done; }
+  fi
+}
+
+# Output pending TODOs in native TodoWrite-compatible format
+_todos_sync() {
+  local filter_run="${1:-}"
+  local native_payload
+  native_payload=$(cq_todos_as_native_format "$filter_run")
+
+  # Update sync state for each run that has pending TODOs
+  local run_ids
+  run_ids=$(jq -r '.run_ids[]' <<< "$native_payload" 2>/dev/null)
+  for run_id in $run_ids; do
+    local run_todos
+    run_todos=$(jq -c --arg rid "$run_id" '[.todos[] | select(.metadata.run_id == $rid) | {id: .id}]' <<< "$native_payload")
+    cq_todo_mark_synced "$run_id" "$run_todos"
+  done
+
+  if [[ "$CQ_JSON" == "true" ]]; then
+    jq '.' <<< "$native_payload"
+  else
+    local count
+    count=$(jq '.todos | length' <<< "$native_payload")
+    if [[ "$count" -eq 0 ]]; then
+      echo "No pending TODOs to sync."
+    else
+      echo "Synced ${count} pending TODO(s) for native integration."
+      jq -r '.todos[] | "  - \(.content) [\(.priority)]"' <<< "$native_payload"
+    fi
+  fi
+}
+
+# Accept resolutions from native system (reads JSON from stdin)
+_todos_apply_sync() {
+  local input
+  input=$(cat)
+  [[ -z "$input" ]] && cq_die "Usage: echo '{\"resolutions\":[...]}' | cq todos apply-sync"
+
+  local result
+  result=$(cq_todos_apply_sync "$input")
+
+  if [[ "$CQ_JSON" == "true" ]]; then
+    jq '.' <<< "$result"
+  else
+    local applied
+    applied=$(jq -r '.applied' <<< "$result")
+    echo "Applied ${applied} resolution(s) from native TODO system."
   fi
 }
 

@@ -170,7 +170,7 @@ _hooks_install() {
       "hooks": [
         {
           "type": "command",
-          "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: deleting .claudekiq directory — use cq cleanup instead\" >&2; exit 0; else echo \"Blocked: cannot delete .claudekiq directory — use cq cleanup instead\" >&2; exit 2; fi;; *\"git checkout\"*|*\"git switch\"*) if ls .claudekiq/runs/*/meta.json 2>/dev/null | head -1 | grep -q .; then for f in .claudekiq/runs/*/meta.json; do status=$(jq -r .status \"$f\" 2>/dev/null); if [ \"$status\" = \"running\" ] || [ \"$status\" = \"gated\" ]; then if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: git checkout/switch while cq workflows are running/gated.\" >&2; exit 0; else echo \"Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first.\" >&2; exit 2; fi; fi; done; fi;; *\"Edit\"*|*\"Write\"*) :;; esac; exit 0'"
+          "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: deleting .claudekiq directory — use cq cleanup instead\" >&2; exit 0; else echo \"Blocked: cannot delete .claudekiq directory — use cq cleanup instead\" >&2; exit 2; fi;; *\"git checkout\"*|*\"git switch\"*) if ls .claudekiq/runs/*/meta.json 2>/dev/null | head -1 | grep -q .; then for f in .claudekiq/runs/*/meta.json; do status=$(jq -r .status \"$f\" 2>/dev/null); if [ \"$status\" = \"running\" ] || [ \"$status\" = \"gated\" ]; then if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: git checkout/switch while cq workflows are running/gated.\" >&2; exit 0; else echo \"Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first.\" >&2; exit 2; fi; fi; done; fi;; *\"git commit\"*) echo \"$input\" | cq _pre-commit-validate 2>&1; exit $?;; *\"Edit\"*|*\"Write\"*) :;; esac; exit 0'"
         }
       ]
     },
@@ -200,6 +200,41 @@ _hooks_install() {
         {
           "type": "command",
           "command": "bash -c 'input=$(cat); output=$(echo \"$input\" | jq -r \".stdout // empty\"); case \"$output\" in *\"step-done\"*|*\"completed\"*|*\"failed\"*|*\"gated\"*|*\"cq: \"*) if command -v osascript &>/dev/null; then msg=$(echo \"$output\" | head -1); osascript -e \"display notification \\\"$msg\\\" with title \\\"cq\\\" sound name \\\"Ping\\\"\" &>/dev/null; elif command -v notify-send &>/dev/null; then msg=$(echo \"$output\" | head -1); notify-send \"cq\" \"$msg\" &>/dev/null; fi;; esac; exit 0'",
+          "async": true
+        },
+        {
+          "type": "command",
+          "command": "cq _stage-context 2>/dev/null || true",
+          "async": true
+        }
+      ]
+    },
+    {
+      "matcher": "Edit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "cq _stage-context 2>/dev/null || true",
+          "async": true
+        }
+      ]
+    },
+    {
+      "matcher": "Write",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "cq _stage-context 2>/dev/null || true",
+          "async": true
+        }
+      ]
+    },
+    {
+      "matcher": "Agent",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "cq _capture-output 2>/dev/null || true",
           "async": true
         }
       ]

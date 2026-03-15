@@ -6,12 +6,43 @@ cmd_step_done() {
   local step_id="${2:?Usage: cq step-done <run_id> <step_id> pass|fail}"
   local outcome="${3:?Usage: cq step-done <run_id> <step_id> pass|fail}"
   local result_json="${4:-null}"
+  local branches_json=""
+
+  # Check for --branches flag (for parallel step completion)
+  shift 3 2>/dev/null || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --branches=*) branches_json="${1#*=}" ;;
+      --branches) shift; branches_json="$1" ;;
+      *) [[ -z "$result_json" || "$result_json" == "null" ]] && result_json="$1" ;;
+    esac
+    shift
+  done
 
   local run_dir
   run_dir=$(cq_require_run "$run_id" "cq step-done <run_id> <step_id> pass|fail [result_json]")
   [[ "$outcome" == "pass" || "$outcome" == "fail" ]] || cq_die "Outcome must be 'pass' or 'fail'"
 
-  cq_with_lock "$run_dir" _step_done_locked "$run_id" "$step_id" "$outcome" "$result_json"
+  # Handle parallel step completion with branch results
+  if [[ -n "$branches_json" ]]; then
+    local parallel_result
+    parallel_result=$(cq_parallel_complete "$run_id" "$step_id" "$branches_json")
+    outcome="$parallel_result"
+    cq_log_event "$run_dir" "step_done" \
+      "$(jq -cn --arg step "$step_id" --arg result "$outcome" --argjson branches "$branches_json" \
+        '{step:$step, result:$result, type:"parallel", branches:$branches}')"
+    local step gate
+    step=$(cq_get_step "$run_id" "$step_id")
+    gate=$(jq -r '.gate // "auto"' <<< "$step")
+    local visits
+    visits=$(jq --arg id "$step_id" '.[$id].visits // 1' "$(cq_run_dir "$run_id")/state.json")
+    _handle_gate "$run_id" "$step_id" "$outcome" "$gate" "$visits"
+  else
+    cq_with_lock "$run_dir" _step_done_locked "$run_id" "$step_id" "$outcome" "$result_json"
+  fi
+
+  # Propagate to parent if this is a sub-workflow completing
+  _propagate_to_parent "$run_id"
 
   if [[ "$CQ_JSON" == "true" ]]; then
     local meta
@@ -19,6 +50,42 @@ cmd_step_done() {
     jq -cn --arg step "$step_id" --arg outcome "$outcome" --argjson meta "$meta" \
       '{step:$step, outcome:$outcome, meta:$meta}'
   fi
+}
+
+# Propagate sub-workflow completion to parent run
+_propagate_to_parent() {
+  local child_run_id="$1"
+  local meta
+  meta=$(cq_read_meta "$child_run_id" 2>/dev/null) || return 0
+  local status
+  status=$(jq -r '.status' <<< "$meta")
+
+  # Only propagate on terminal states
+  case "$status" in
+    completed|failed|cancelled) ;;
+    *) return 0 ;;
+  esac
+
+  local parent_run_id parent_step_id
+  parent_run_id=$(jq -r '.parent_run_id // empty' <<< "$meta")
+  [[ -z "$parent_run_id" ]] && return 0
+  parent_step_id=$(jq -r '.parent_step_id // empty' <<< "$meta")
+  [[ -z "$parent_step_id" ]] && return 0
+
+  # Verify parent exists
+  cq_run_exists "$parent_run_id" || return 0
+
+  # Copy outputs back
+  local step
+  step=$(cq_get_step "$parent_run_id" "$parent_step_id" 2>/dev/null) || return 0
+  local outputs
+  outputs=$(jq -r '.outputs // null' <<< "$step")
+  cq_copy_outputs_back "$parent_run_id" "$child_run_id" "$parent_step_id" "$outputs"
+
+  # Mark parent step as done
+  local outcome="pass"
+  [[ "$status" == "failed" || "$status" == "cancelled" ]] && outcome="fail"
+  cmd_step_done "$parent_run_id" "$parent_step_id" "$outcome" 2>/dev/null || true
 }
 
 _step_done_locked() {
@@ -55,10 +122,12 @@ _step_done_locked() {
      .[$id].finished_at = $finished_at | .[$id].result_data = $result_json' <<< "$state")
   cq_write_json "${run_dir}/state.json" "$state"
 
-  # Log step completion
+  # Log step completion (include file tracking if available)
+  local step_files
+  step_files=$(jq --arg id "$step_id" '.[$id].files // []' <<< "$state")
   cq_log_event "$run_dir" "step_done" \
-    "$(jq -cn --arg step "$step_id" --arg result "$outcome" --argjson visits "$visits" \
-      '{step:$step, result:$result, visits:$visits}')"
+    "$(jq -cn --arg step "$step_id" --arg result "$outcome" --argjson visits "$visits" --argjson files "$step_files" \
+      '{step:$step, result:$result, visits:$visits, files:$files}')"
 
   # Extract outputs if step defines them
   _extract_outputs "$run_id" "$step_id" "$result_json"

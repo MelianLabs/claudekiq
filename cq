@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-export CQ_VERSION="3.1.4"
+export CQ_VERSION="3.1.5"
 
 # --- Resolve script location and source libs ---
 
@@ -148,6 +148,11 @@ case "$COMMAND" in
 
   # MCP server mode
   mcp)            _source_lib "mcp.sh"; cq_mcp_serve ;;
+
+  # Internal hook handlers (underscore-prefixed, not in help/schema)
+  _stage-context)       cmd__stage_context "$@" ;;
+  _pre-commit-validate) cmd__pre_commit_validate "$@" ;;
+  _capture-output)      cmd__capture_output "$@" ;;
 
   *)
     echo "cq: unknown command '${COMMAND}'. Run 'cq help' for usage." >&2

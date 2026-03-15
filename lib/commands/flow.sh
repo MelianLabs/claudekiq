@@ -14,6 +14,8 @@ cmd_pause() {
     running|queued|gated)
       cq_update_meta "$run_id" '.status = "paused"'
       cq_log_event "$run_dir" "run_paused" '{}'
+      # Cascade pause to child runs
+      _cascade_to_children "$run_id" "pause"
       cq_json_out --arg id "$run_id" '{run_id:$id, status:"paused"}' || \
         cq_info "$(cq_marker "paused") Paused run ${run_id}"
       ;;
@@ -57,6 +59,8 @@ cmd_cancel() {
     *)
       cq_update_meta "$run_id" '.status = "cancelled"'
       cq_log_event "$run_dir" "run_cancelled" '{}'
+      # Cascade cancel to child runs
+      _cascade_to_children "$run_id" "cancel"
       cq_json_out --arg id "$run_id" '{run_id:$id, status:"cancelled"}' || \
         cq_info "$(cq_marker "cancelled") Cancelled run ${run_id}"
       ;;
@@ -92,4 +96,27 @@ cmd_retry() {
 
   cq_json_out --arg id "$run_id" --arg step "$current_step" '{run_id:$id, status:"running", retry_step:$step}' || \
     cq_info "$(cq_marker "running") Retrying run ${run_id} from step '${current_step}'"
+}
+
+# Cascade a flow control action to child sub-workflow runs
+_cascade_to_children() {
+  local parent_run_id="$1" action="$2"
+  local child_run_id
+  for child_run_id in $(cq_child_run_ids "$parent_run_id"); do
+    local child_status
+    child_status=$(jq -r '.status' "$(cq_run_dir "$child_run_id")/meta.json" 2>/dev/null) || continue
+    case "$action" in
+      pause)
+        case "$child_status" in
+          running|queued|gated) cmd_pause "$child_run_id" >/dev/null 2>&1 || true ;;
+        esac
+        ;;
+      cancel)
+        case "$child_status" in
+          completed|cancelled) ;;
+          *) cmd_cancel "$child_run_id" >/dev/null 2>&1 || true ;;
+        esac
+        ;;
+    esac
+  done
 }

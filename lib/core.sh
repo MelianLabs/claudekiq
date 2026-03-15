@@ -535,7 +535,7 @@ cq_resolve_step_type() {
 
   # 1. Built-in types
   case "$step_type" in
-    bash|agent|skill) echo "builtin"; return ;;
+    bash|agent|skill|parallel|workflow) echo "builtin"; return ;;
   esac
 
   # 2. Agent-backed: .claude/agents/<type>.md

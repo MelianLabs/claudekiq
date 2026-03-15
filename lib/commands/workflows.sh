@@ -162,6 +162,42 @@ cmd_workflows_validate() {
     [[ -n "$warn" ]] && errors+=("$warn")
   done <<< "$type_warnings"
 
+  # Validate parallel steps have branches array
+  local parallel_errors
+  parallel_errors=$(jq -r '
+    .steps[] | select(.type == "parallel") |
+    if (.branches == null or (.branches | length) == 0) then
+      "Parallel step '\''\(.id)'\'': requires non-empty '\''branches'\'' array"
+    else empty end
+  ' <<< "$wf_json" 2>/dev/null)
+  while IFS= read -r err; do
+    [[ -n "$err" ]] && errors+=("$err")
+  done <<< "$parallel_errors"
+
+  # Validate parallel branch definitions
+  local branch_errors
+  branch_errors=$(jq -r '
+    .steps[] | select(.type == "parallel") | .id as $pid |
+    .branches // [] | to_entries[] |
+    (if .value.id == null or .value.id == "" then "Parallel step '\''\($pid)'\'' branch \(.key): missing '\''id'\''" else empty end),
+    (if .value.type == null or .value.type == "" then "Parallel step '\''\($pid)'\'' branch '\''\(.value.id // .key)'\'': missing '\''type'\''" else empty end)
+  ' <<< "$wf_json" 2>/dev/null)
+  while IFS= read -r err; do
+    [[ -n "$err" ]] && errors+=("$err")
+  done <<< "$branch_errors"
+
+  # Validate workflow steps have template field
+  local workflow_errors
+  workflow_errors=$(jq -r '
+    .steps[] | select(.type == "workflow") |
+    if (.template == null or .template == "") then
+      "Workflow step '\''\(.id)'\'': requires '\''template'\'' field"
+    else empty end
+  ' <<< "$wf_json" 2>/dev/null)
+  while IFS= read -r err; do
+    [[ -n "$err" ]] && errors+=("$err")
+  done <<< "$workflow_errors"
+
   # Check for duplicate step IDs
   local dupes
   dupes=$(jq -r '[.steps[].id] | group_by(.) | map(select(length > 1)) | .[0][0] // empty' <<< "$wf_json")
