@@ -26,7 +26,7 @@ teardown() {
   "$CQ" init >/dev/null
   [ -f .claude-plugin/plugin.json ]
   jq -e '.name == "claudekiq"' .claude-plugin/plugin.json
-  jq -e '.version == "3.1.0"' .claude-plugin/plugin.json
+  jq -e '.version == "3.1.2"' .claude-plugin/plugin.json
   jq -e '.skills | length == 4' .claude-plugin/plugin.json
 }
 
@@ -42,10 +42,24 @@ teardown() {
   [ ! -d .claude/hooks ]
 }
 
-@test "init does not create .claude/settings.json" {
+@test "init auto-installs hooks in .claude/settings.json" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null
-  [ ! -f .claude/settings.json ]
+  [ -f .claude/settings.json ]
+  jq -e '.hooks.SessionEnd | length > 0' .claude/settings.json
+  jq -e '.hooks.PreToolUse | length > 0' .claude/settings.json
+  jq -e '.hooks.PostToolUse | length > 0' .claude/settings.json
+}
+
+@test "init re-run does not duplicate hooks" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  local count1
+  count1=$(jq '.hooks.SessionEnd | length' .claude/settings.json)
+  "$CQ" init >/dev/null
+  local count2
+  count2=$(jq '.hooks.SessionEnd | length' .claude/settings.json)
+  [ "$count1" -eq "$count2" ]
 }
 
 @test "init re-run updates plugin.json" {

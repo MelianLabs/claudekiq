@@ -195,6 +195,42 @@ EOF
   jq -e '.stacks | type == "array"' .claudekiq/settings.json
 }
 
+@test "scan discovers plugin skills from plugin.json" {
+  # Create a mock plugin skill
+  mkdir -p .mock-skills/test-skill
+  cat > .mock-skills/test-skill/SKILL.md <<'EOF'
+---
+name: test-skill
+description: "A plugin-discovered skill"
+allowed-tools: Bash, Read
+---
+
+Test skill content.
+EOF
+
+  # Create plugin.json pointing to the mock skill
+  mkdir -p .claude-plugin
+  jq -cn '{name:"test", version:"1.0", skills:["../.mock-skills/test-skill"]}' > .claude-plugin/plugin.json
+
+  run "$CQ" scan --json
+  [ "$status" -eq 0 ]
+
+  # Verify plugin skill appears in results
+  local skill_name
+  skill_name=$(echo "$output" | jq -r '.skills[] | select(.name == "test-skill") | .name')
+  [ "$skill_name" = "test-skill" ]
+
+  # Verify source is "plugin"
+  local source
+  source=$(echo "$output" | jq -r '.skills[] | select(.name == "test-skill") | .source')
+  [ "$source" = "plugin" ]
+
+  # Verify it's persisted in settings.json
+  local stored
+  stored=$(jq -r '.skills[] | select(.name == "test-skill") | .source' .claudekiq/settings.json)
+  [ "$stored" = "plugin" ]
+}
+
 @test "schema scan returns valid JSON" {
   run "$CQ" schema scan
   [ "$status" -eq 0 ]

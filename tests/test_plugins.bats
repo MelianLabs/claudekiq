@@ -28,7 +28,7 @@ teardown() { teardown_test_project; }
   source "$CQ_ROOT/lib/core.sh"
   export CQ_PROJECT_ROOT="$TEST_DIR"
 
-  for t in bash agent skill manual subflow for_each parallel batch; do
+  for t in bash agent skill; do
     result=$(cq_resolve_step_type "$t")
     [ "$result" = "builtin" ]
   done
@@ -45,12 +45,20 @@ teardown() { teardown_test_project; }
   [ "$result" = "agent" ]
 }
 
-@test "resolve_step_type returns unknown for missing type" {
+@test "resolve_step_type returns convention for missing type" {
   source "$CQ_ROOT/lib/core.sh"
   export CQ_PROJECT_ROOT="$TEST_DIR"
 
   result=$(cq_resolve_step_type "nonexistent")
-  [ "$result" = "unknown" ]
+  [ "$result" = "convention" ]
+}
+
+@test "resolve_step_type returns convention for custom type like review" {
+  source "$CQ_ROOT/lib/core.sh"
+  export CQ_PROJECT_ROOT="$TEST_DIR"
+
+  result=$(cq_resolve_step_type "review")
+  [ "$result" = "convention" ]
 }
 
 @test "resolve_step_type checks scan results for agent" {
@@ -67,7 +75,7 @@ teardown() { teardown_test_project; }
 
 # --- Workflow validation with custom types ---
 
-@test "workflows validate warns on unknown step type" {
+@test "workflows validate treats unknown type as convention-based" {
   cat > .claudekiq/workflows/custom-type.yml <<'YAML'
 name: custom-type-test
 description: Test custom step types
@@ -79,9 +87,7 @@ steps:
 YAML
 
   run "$CQ" workflows validate .claudekiq/workflows/custom-type.yml
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"nonexistent-type"* ]]
-  [[ "$output" == *"not a built-in type"* ]]
+  [ "$status" -eq 0 ]
 }
 
 @test "workflows validate passes with agent-backed custom type" {

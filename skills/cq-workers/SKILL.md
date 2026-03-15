@@ -25,16 +25,16 @@ Each job in the JSON array must have at least `id` and `description`. Additional
 ## Start Workers
 
 1. Parse the `--jobs` JSON array (or read from `--jobs-from` file)
-2. Generate a session_id: run `cq workers init --json` and extract the session_id
+2. Generate a session_id: `printf '%04x%04x' $RANDOM $RANDOM` and create the coordination directory: `mkdir -p .claudekiq/workers/<session_id>` with a `manifest.json` (`{"session_id":"<id>","created_at":"<ts>","workflow":"<name>"}`)
 3. Determine mode: interactive (default) or headless (if `--headless` flag)
 4. For EACH job, spawn a background Agent with worktree isolation:
 
 ```
 Agent tool call:
   description: "Worker: <job_id>"
-  subagent_type: "cq-worker"
   isolation: "worktree"
   run_in_background: true
+  model: "sonnet"
   prompt: <child agent prompt below>
 ```
 
@@ -51,6 +51,10 @@ For each job, construct this prompt (interpolating values):
 
 ```
 You are a cq worker agent processing job "JOB_ID: DESCRIPTION".
+
+## Identity & Tools
+You are a background worker agent (model: sonnet). You have access to: Bash, Read, Glob, Grep, Edit, Write.
+Do NOT use Agent, Skill, or AskUserQuestion — you are a background agent and cannot interact with the user or spawn sub-agents.
 
 ## Environment
 - PARENT_ROOT=<absolute path to main worktree>
@@ -71,8 +75,9 @@ Execute each step of the cq workflow:
 2. If completed/failed/cancelled: write final status and stop
 3. Find current step, interpolate variables, execute it:
    - bash: run the command
-   - agent: do the work described in args_template
-   - manual: mark as pass (headless) or write gate info (interactive)
+   - agent: do the work described in the prompt yourself (you ARE the agent)
+   - skill: invoke the skill via Bash
+   - convention-based (any other type): treat as agent — the type name gives you semantic context
 4. Mark done: cq step-done <run_id> <step_id> pass|fail
 5. Write heartbeat: cq heartbeat <run_id>
 6. For long-running steps (agent, skill), use CronCreate for heartbeats BEFORE execution:
@@ -124,7 +129,8 @@ After spawning all workers, loop until all jobs reach a terminal state. **Prefer
 When a background agent completion notification arrives, OR on 30-second fallback:
 
 ```bash
-cq workers status <session_id> --json
+# Read all status files from the coordination directory
+for f in .claudekiq/workers/<session_id>/*.status.json; do cat "$f"; done | jq -s '.'
 ```
 
 If a specific agent completed, use `Agent(resume: <agentId>)` to retrieve its detailed results and extract any output data needed for the dashboard.
@@ -160,11 +166,9 @@ Workers: X spawned, Y running, Z gated, W done
 For each worker with status "gated":
 1. Show the gate details to the user (step name, description, what action is needed)
 2. Ask the user: approve, reject, or provide data
-3. Write the answer:
+3. Write the answer file directly:
    ```bash
-   cq workers answer <session_id> <job_id> approve
-   # or with data:
-   cq workers answer <session_id> <job_id> approve '{"key":"value"}'
+   jq -cn --arg action "approve" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{action:$action, answered_at:$ts}' > .claudekiq/workers/<session_id>/<job_id>.answer.json
    ```
 4. The child worker will pick up the answer and continue
 

@@ -224,7 +224,7 @@ routing:
 |-------|------|-------------|
 | `id` | string | Unique step identifier (required) |
 | `name` | string | Human-readable name |
-| `type` | string | Step type: `agent`, `bash`, `skill`, `manual`, `subflow`, `for_each`, `parallel`, `batch`, or custom |
+| `type` | string | Step type: `agent`, `bash`, `skill`, or convention-based custom name |
 | `prompt` | string | Goal description for agent steps. Supports `{{interpolation}}` |
 | `context` | array | List of context keys to inject into agent prompt |
 | `target` | string | Command (bash), agent name (`@name`), skill name, or workflow name |
@@ -244,22 +244,7 @@ routing:
 | `agent` | Agent name (e.g., `@rails-dev`) or omitted | Claude Code Agent tool. Uses `prompt:` for goals. |
 | `skill` | Skill name (e.g., `/lt`) | Claude Code Skill tool |
 | `bash` | Shell command | Bash execution |
-| `manual` | — (uses `description`) | Creates human action, waits |
-| `subflow` | Workflow name | Inserts steps from another workflow |
-| custom | Defined by plugin | Runs `.claudekiq/plugins/<type>.sh` |
-
-### Custom step type plugins
-
-A plugin is a bash script in `.claudekiq/plugins/<type>.sh` that receives step data as JSON on stdin and must exit 0 (pass) or non-zero (fail). Stdout is captured as step output.
-
-```bash
-#!/usr/bin/env bash
-# .claudekiq/plugins/docker.sh
-step=$(cat)
-image=$(echo "$step" | jq -r '.target')
-args=$(echo "$step" | jq -r '.args')
-docker run --rm "$image" $args
-```
+| convention | Any custom name (e.g., `review`) | Treated as agent step with semantic context |
 
 ---
 
@@ -404,12 +389,6 @@ Setup:
   cq help [command]                    Show help
   cq schema [command]                  Show command schema (JSON, for AI agents)
 
-Workers (parallel orchestration):
-  cq workers init                      Create a new worker session
-  cq workers status <session_id>       Show status of all workers in a session
-  cq workers answer <sid> <jid> <action> [data]  Answer a gated worker
-  cq workers cleanup [--max-age=N]     Remove old worker sessions
-
 Maintenance:
   cq cleanup                           Remove expired runs
 ```
@@ -475,10 +454,7 @@ Dispatch by step type:
 - `bash` → Run command via Bash tool. Exit code = outcome.
 - `agent` → Invoke `/cq-agent` sub-skill with step JSON. AI evaluates results.
 - `skill` → Invoke Skill tool with target name.
-- `manual` → Display description, gate system creates TODO.
-- `subflow` → `cq add-steps`.
-- `for_each`/`parallel`/`batch` → CLI for bash children, `/cq-agent` for agent children.
-- Custom type → Resolve via `cq_resolve_step_type`, dispatch accordingly.
+- Convention-based (any custom type) → Treated as agent step with type name as context.
 
 ### `/cq-agent` sub-skill — Agent Step Handler
 
@@ -504,7 +480,6 @@ cq start feature --story_id=123 --headless
 
 In headless mode:
 - `human` gates are auto-approved
-- `manual` steps are skipped
 - `review` gates follow max_visits logic only (no human escalation — fail the run instead)
 - All output is JSON
 

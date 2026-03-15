@@ -90,12 +90,10 @@ steps:
     prompt: "What the skill should accomplish."
     gate: auto
 
-  - id: <manual-step-id>
-    name: <Human-readable Name>
-    type: manual
-    prompt: "Instructions for the human reviewer."
-    gate: human
 ```
+
+Any step can have `gate: human` to pause for approval (replaces old `manual` type).
+Convention-based custom types (e.g., `review`, `deploy`, `migrate`) are also supported — they are treated as agent steps with the type name providing semantic context.
 
 ### Rules for Generation
 
@@ -104,7 +102,7 @@ steps:
 3. **Multi-stack workflows** — If the project has multiple stacks (e.g., Rails + React), generate steps that test/build each stack. Use the specific stack's commands for each step.
 4. **Use `prompt` for agent/skill steps** — The `prompt` field describes what the agent should do. Agent steps receive raw prompts (no interpolation).
 5. **Use `params` for workflow parameters** — Document required inputs at the top level.
-6. **Set appropriate gates** — `human` for risky steps (deploy, commit, push), `review` for tests with retry, `auto` for safe steps.
+6. **Set appropriate gates** — `human` for risky steps (deploy, commit, push) and for steps that need human review (replaces old `manual` type), `review` for tests with retry, `auto` for safe steps.
 7. **Test-fix loops** — Use `review` gate with `max_visits: 3`, `on_fail` pointing to a fix step, fix step pointing back to test.
 8. **Timeouts** — Add `timeout: 300` (seconds) for steps that might hang.
 

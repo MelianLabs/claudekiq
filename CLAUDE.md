@@ -46,9 +46,6 @@ Commands were split from a monolithic `commands.sh` into domain-specific files:
 - `workflows.sh` — `workflows` (list/show/validate), `validate`
 - `config.sh` — `config` (get/set)
 - `maintenance.sh` — `cleanup`, `heartbeat`, `check-stale`
-- `workers.sh` — `workers` (parallel orchestration)
-- `iteration.sh` — `for-each`, `parallel`, `batch` (iteration CLI commands)
-
 MCP server mode is in `lib/mcp.sh`, loaded on-demand.
 
 ### Storage Layout
@@ -62,8 +59,8 @@ All run state lives in `.claudekiq/runs/<run_id>/` (gitignored):
 
 ### Key Concepts
 
-- **Step types**: `bash`, `agent`, `skill`, `manual`, `subflow`, `for_each`, `parallel`, `batch`, plus custom types via agent-backed definitions (`.claude/agents/<type>.md`)
-- **Gates**: `auto` (continue), `human` (wait for approval via `AskUserQuestion`), `review` (retry loop with max_visits escalation)
+- **Step types**: `bash`, `agent`, `skill` (built-in), plus convention-based custom types (any unrecognized type name is treated as an agent step with semantic context)
+- **Gates**: `auto` (continue), `human` (wait for approval via `AskUserQuestion` — replaces old `manual` type), `review` (retry loop with max_visits escalation)
 - **Interpolation**: `{{expr}}` in bash targets only, resolved from context via jq. Agent steps receive raw prompt + context — Claude decides how to use it. Supports nested access (`{{config.timeout}}`), array indexing (`{{items[0].name}}`), and jq expressions (`{{results | length}}`).
 - **Config resolution**: global (`~/.cq/config.json`) merged with project (`.claudekiq/settings.json`), project wins
 - **Agent mappings**: stored in `.claudekiq/settings.json` under `agent_mappings` key
@@ -77,12 +74,12 @@ All run state lives in `.claudekiq/runs/<run_id>/` (gitignored):
 - `.claude-plugin/plugin.json` pointing to `~/.cq/skills/`
 - `.gitignore` entries
 
-It does **not** touch `.claude/` (no skills, hooks, agents, or settings.json installed). Skills are served via the `.claude-plugin/plugin.json` plugin system from `~/.cq/skills/`.
+Hooks are auto-installed into `.claude/settings.json`. Skills are served via the `.claude-plugin/plugin.json` plugin system from `~/.cq/skills/`.
 
 ### Hooks System (`cq hooks`)
 
-Hooks are opt-in via `cq hooks install`:
-- Merges cq-specific hooks into `.claude/settings.json` (SessionEnd, PreToolUse, SubagentStop, WorktreeCreate)
+Hooks are auto-installed by `cq init`:
+- Merges cq-specific hooks into `.claude/settings.json` (SessionEnd, PreToolUse, SubagentStop, PostToolUse, WorktreeCreate)
 - `cq hooks uninstall` cleanly removes only cq hooks
 - Configurable notification commands in `.claudekiq/settings.json` → `notifications`: `on_start`, `on_gate`, `on_fail`, `on_complete`
 - `cq_fire_hook()` emits structured JSON events with version, status, and timestamp to stderr
@@ -92,6 +89,7 @@ Hooks are opt-in via `cq hooks install`:
 `cq scan` discovers agents, skills, and stacks available in the project:
 - Scans `.claude/agents/*.md` — parses YAML frontmatter for name, model, tools, description
 - Scans `.claude/skills/*/SKILL.md` — parses frontmatter for name, description, allowed-tools
+- Scans `.claude-plugin/plugin.json` — discovers plugin-provided skills (marked with `source: "plugin"`)
 - Detects project stacks — returns `stacks` as an array (multi-stack support: e.g., Rails + React)
 - Each stack object has: `language`, `framework`, `test_command`, `build_command`, `lint_command`
 - Writes results to `.claudekiq/settings.json` as `agents`, `skills`, `stacks` arrays
@@ -105,20 +103,10 @@ Agents are named after their stack: `@rails-dev`, `@react-dev`, `@go-dev`, etc. 
 ### Custom Step Types
 
 Custom step types resolve via `cq_resolve_step_type()` in `lib/core.sh`:
-1. Built-in types (`bash`, `agent`, `skill`, etc.)
-2. Agent-backed: `.claude/agents/<type>.md` file exists
-3. Scan results: `agents` array in settings.json
-4. Otherwise: `"unknown"`
-
-### Iteration Commands
-
-CLI commands for executing `for_each`, `parallel`, and `batch` step types:
-
-- `cq for-each` — standalone (`--over`, `--var`, `--command`) or workflow mode (`<run_id> <step_id>`)
-- `cq parallel` — standalone (`--steps` JSON array) or workflow mode
-- `cq batch` — standalone (`--workflow`, `--jobs`) or workflow mode; creates worker sessions
-
-These handle bash sub-steps directly. Agent/skill sub-steps are deferred to the SKILL.md runner.
+1. Built-in types (`bash`, `agent`, `skill`) → returns `"builtin"`
+2. Agent-backed: `.claude/agents/<type>.md` file exists → returns `"agent"`
+3. Scan results: `agents` array in settings.json → returns `"agent"`
+4. Otherwise: returns `"convention"` (treated as agent step with type name as semantic context)
 
 ## Git Safety
 

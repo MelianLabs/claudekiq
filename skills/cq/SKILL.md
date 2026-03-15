@@ -97,26 +97,8 @@ The sub-skill handles prompt assembly, model selection, agent spawning, heartbea
 #### `skill`
 Invoke the Skill tool with the target skill name and interpolated arguments.
 
-#### `manual`
-Display the step description. The gate system creates a TODO.
-
-#### `subflow`
-```bash
-cq add-steps <run_id> --flow <target> --after <current_step_id>
-```
-Mark step as pass and continue.
-
-#### `for_each` / `parallel` / `batch`
-For **bash** sub-steps: use the CLI command (`cq for-each`, `cq parallel`, `cq batch`).
-For **agent/skill** sub-steps: invoke `/cq-agent` for each, or spawn parallel agents.
-
-For `batch`: create worker session with `cq batch <run_id> <step_id> --json`, then invoke `/cq-workers`.
-
-#### Custom type (agent-backed)
-Check resolution:
-1. `.claude/agents/<type>.md` exists → treat as agent step, invoke `/cq-agent`
-2. Check `agents` array in settings.json → treat as agent step
-3. Not found → fail with "Unknown step type"
+#### Convention-based type (any custom name)
+For any type not listed above (e.g., `review`, `deploy`, `migrate`), treat it as an agent step. The type name provides semantic context for the agent. Dispatch to `/cq-agent` with the type name included in the prompt context.
 
 ### 5. Handle Timeouts
 If step has `timeout:`:

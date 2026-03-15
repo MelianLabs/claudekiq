@@ -534,7 +534,7 @@ cq_resolve_step_type() {
 
   # 1. Built-in types
   case "$step_type" in
-    bash|agent|skill|manual|subflow|for_each|parallel|batch) echo "builtin"; return ;;
+    bash|agent|skill) echo "builtin"; return ;;
   esac
 
   # 2. Agent-backed: .claude/agents/<type>.md
@@ -552,7 +552,7 @@ cq_resolve_step_type() {
     if [[ -n "$found" ]]; then echo "$found"; return; fi
   fi
 
-  echo "unknown"
+  echo "convention"
 }
 
 # --- Agent target mapping ---

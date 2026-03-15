@@ -39,7 +39,7 @@ else
     curl -fsSL "${REPO_URL}/lib/${lib}" -o "${CQ_HOME}/lib/${lib}"
   done
   mkdir -p "${CQ_HOME}/lib/commands"
-  for cmd_lib in setup.sh scan.sh lifecycle.sh flow.sh steps.sh todos.sh ctx.sh dynamic.sh workflows.sh config.sh maintenance.sh workers.sh iteration.sh; do
+  for cmd_lib in setup.sh scan.sh lifecycle.sh flow.sh steps.sh todos.sh ctx.sh dynamic.sh workflows.sh config.sh maintenance.sh; do
     curl -fsSL "${REPO_URL}/lib/commands/${cmd_lib}" -o "${CQ_HOME}/lib/commands/${cmd_lib}"
   done
   mkdir -p "${CQ_HOME}/skills/cq"

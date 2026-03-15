@@ -4,18 +4,28 @@
 cmd_scan() {
   [[ -d "${CQ_PROJECT_ROOT}/.claudekiq" ]] || cq_die "Not a cq project. Run 'cq init' first."
 
-  local agents skills stacks
+  local agents skills plugin_skills stacks
   agents=$(_scan_agents)
   skills=$(_scan_skills)
+  plugin_skills=$(_scan_plugin_skills)
   stacks=$(_scan_stacks)
+
+  # Merge plugin skills into skills (deduplicate by name, plugin wins)
+  skills=$(jq -n --argjson local "$skills" --argjson plugin "$plugin_skills" '
+    ($local + $plugin) | group_by(.name) | map(
+      if length > 1 then (map(select(.source == "plugin")) | first) // first
+      else first end
+    )
+  ')
 
   _merge_scan_results "$agents" "$skills" "$stacks"
 
   local ts
   ts=$(cq_now)
-  local agent_count skill_count
+  local agent_count skill_count stack_count
   agent_count=$(jq 'length' <<< "$agents")
   skill_count=$(jq 'length' <<< "$skills")
+  stack_count=$(jq 'length' <<< "$stacks")
 
   cq_json_out \
     --argjson agents "$agents" \
@@ -23,7 +33,7 @@ cmd_scan() {
     --argjson stacks "$stacks" \
     --arg scanned_at "$ts" \
     '{agents:$agents, skills:$skills, stacks:$stacks, scanned_at:$scanned_at}' || \
-    cq_info "Scanned: ${agent_count} agent(s), ${skill_count} skill(s)"
+    cq_info "Scanned: ${agent_count} agent(s), ${skill_count} skill(s), ${stack_count} stack(s)"
 }
 
 _scan_agents() {
@@ -88,6 +98,57 @@ _scan_skills() {
         } | with_entries(select(.value != null))') || continue
       items+=("$item")
     done
+  fi
+
+  if [[ ${#items[@]} -gt 0 ]]; then
+    printf '%s\n' "${items[@]}" | jq -s '.'
+  else
+    echo '[]'
+  fi
+}
+
+_scan_plugin_skills() {
+  local plugin_file="${CQ_PROJECT_ROOT}/.claude-plugin/plugin.json"
+  local -a items=()
+
+  if [[ -f "$plugin_file" ]]; then
+    local plugin_dir
+    plugin_dir=$(dirname "$plugin_file")
+    local skill_paths
+    skill_paths=$(jq -r '.skills // [] | .[]' "$plugin_file" 2>/dev/null)
+
+    local spath
+    while IFS= read -r spath; do
+      [[ -z "$spath" ]] && continue
+      # Resolve relative to plugin dir
+      local resolved
+      if [[ "$spath" == /* ]]; then
+        resolved="$spath"
+      else
+        resolved="${plugin_dir}/${spath}"
+      fi
+      local skill_md="${resolved}/SKILL.md"
+      [[ -f "$skill_md" ]] || continue
+
+      local frontmatter
+      frontmatter=$(_extract_frontmatter "$skill_md") || continue
+      [[ -z "$frontmatter" || "$frontmatter" == "null" ]] && continue
+
+      local dir_name
+      dir_name=$(basename "$resolved")
+
+      local item
+      item=$(jq -cn \
+        --arg fallback_name "$dir_name" \
+        --argjson fm "$frontmatter" \
+        '{
+          name: ($fm.name // $fallback_name),
+          description: ($fm.description // null),
+          tools: (if $fm["allowed-tools"] then ($fm["allowed-tools"] | split(",") | map(gsub("^\\s+|\\s+$"; ""))) else null end),
+          source: "plugin"
+        } | with_entries(select(.value != null))') || continue
+      items+=("$item")
+    done <<< "$skill_paths"
   fi
 
   if [[ ${#items[@]} -gt 0 ]]; then

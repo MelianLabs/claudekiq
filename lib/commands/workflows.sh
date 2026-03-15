@@ -154,8 +154,8 @@ cmd_workflows_validate() {
     [[ -z "$stype" ]] && continue
     local kind
     kind=$(cq_resolve_step_type "$stype")
-    if [[ "$kind" == "unknown" ]]; then
-      echo "Step type '${stype}' is not a built-in type and no matching agent was found (run 'cq scan' to discover agents)"
+    if [[ "$kind" == "convention" ]]; then
+      echo "INFO: Step type '${stype}' will be treated as convention-based agent step" >&2
     fi
   done)
   while IFS= read -r warn; do

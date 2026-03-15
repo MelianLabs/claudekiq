@@ -151,9 +151,9 @@ A workflow is a YAML file with **steps**. Each step has:
 | Field | Description |
 |-------|-------------|
 | `id` | Unique identifier |
-| `type` | How to execute: `bash`, `agent`, `skill`, `manual`, `subflow` |
+| `type` | How to execute: `bash`, `agent`, `skill`, or convention-based custom name |
 | `target` | What to execute (command, agent role, skill name) |
-| `args_template` | Arguments with `{{variable}}` interpolation |
+| `prompt` | Goal description for agent steps |
 | `gate` | What happens after: `auto`, `human`, `review` |
 
 ### Step Types
@@ -161,11 +161,7 @@ A workflow is a YAML file with **steps**. Each step has:
 - **`bash`** — Run a shell command. Pass on exit 0, fail otherwise.
 - **`agent`** — AI task. Use `@agent-name` to target a specific agent, or leave empty for inline execution.
 - **`skill`** — Invoke a Claude Code skill (e.g., `/commit`, `/review`).
-- **`manual`** — Human action. Displays instructions and waits for approval.
-- **`subflow`** — Insert steps from another workflow inline.
-- **`for_each`** — Iterate over a list, executing a sub-step per item.
-- **`parallel`** — Run multiple sub-steps concurrently.
-- **`batch`** — Spawn isolated worker agents for each job in a list.
+- **Convention-based** — Any custom type name (e.g., `review`, `deploy`, `migrate`) is treated as an agent step with the type name providing semantic context.
 
 ### Gates
 
@@ -379,17 +375,6 @@ Meanwhile, `/cq status` tracked progress from another session:
 | `cq add-steps <run_id> --flow <workflow> --after <step_id>` | Insert steps from another workflow |
 | `cq set-next <run_id> <step_id>` | Jump to a specific step |
 
-### Iteration
-
-| Command | Description |
-|---------|-------------|
-| `cq for-each --over=<list> --var=<name> --command=<cmd>` | Iterate over a list, running a command per item |
-| `cq for-each <run_id> <step_id>` | Execute a for_each workflow step |
-| `cq parallel --steps=<json>` | Run multiple steps concurrently |
-| `cq parallel <run_id> <step_id>` | Execute a parallel workflow step |
-| `cq batch --workflow=<name> --jobs=<json>` | Create a batch worker session |
-| `cq batch <run_id> <step_id>` | Execute a batch workflow step |
-
 ### Templates
 
 | Command | Description |
@@ -563,9 +548,11 @@ Name agents after their stack: `@rails-dev`, `@react-dev`, `@go-dev`, etc. This 
   prompt: "Fix the component rendering issue."
 ```
 
-## Custom Step Types
+## Convention-Based Custom Types
 
-Define custom step types backed by agent definitions. When a workflow step has a type that isn't built-in (bash, agent, skill, etc.), cq resolves it by checking `.claude/agents/<type>.md` or the scan results.
+Any step type that isn't built-in (`bash`, `agent`, `skill`) is treated as a convention-based agent step. The type name provides semantic context — for example, a step with `type: review` will be executed as an agent step with the knowledge that it's performing a review. Agent-backed types (`.claude/agents/<type>.md` or scan results) are also supported.
+
+Use `gate: human` on any step to pause for human approval (replaces the old `manual` type).
 
 ## Parallel Workers (`/cq-workers`)
 
@@ -589,18 +576,18 @@ Or load jobs from a file:
 
 ### How It Works
 
-1. The parent (your main Claude instance) creates a **worker session** via `cq workers init`
+1. The parent (your main Claude instance) creates a **worker session** directory
 2. For each job, it spawns a **background Agent** with `isolation: "worktree"` — giving each worker its own git worktree
 3. Each worker runs `cq init` + `cq start <workflow>` and executes the full workflow independently
 4. Workers write status updates to a shared coordination directory: `.claudekiq/workers/<session_id>/`
-5. The parent monitors all workers via `cq workers status <session_id>`
+5. The parent monitors all workers by reading status files from the coordination directory
 
 ### Gate Escalation
 
 When a child worker hits a **human gate** (needs approval):
 - The worker writes gate details to its status file and polls for an answer
 - The parent detects the gate, shows you the details, and asks for your decision
-- You approve/reject, the parent writes an answer file via `cq workers answer`
+- You approve/reject, the parent writes an answer file to the coordination directory
 - The child picks up the answer and continues
 
 ### Headless Mode
@@ -631,15 +618,6 @@ While workers are running, the parent shows a live dashboard:
 Workers: 3 spawned, 2 running, 1 gated, 0 done
 ```
 
-### CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `cq workers init` | Create a new worker session |
-| `cq workers status <session_id>` | Show status of all workers in a session |
-| `cq workers answer <sid> <job_id> <action> [data]` | Send answer to a gated worker |
-| `cq workers cleanup [--max-age=N]` | Remove old worker sessions |
-
 ### Coordination Directory
 
 ```
@@ -649,6 +627,8 @@ Workers: 3 spawned, 2 running, 1 gated, 0 done
     <job_id>.status.json               # Written by child (status updates)
     <job_id>.answer.json               # Written by parent (gate responses)
 ```
+
+Worker coordination uses direct filesystem I/O — no CLI commands needed.
 
 ## Design Principles
 

@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-export CQ_VERSION="3.1.1"
+export CQ_VERSION="3.1.2"
 
 # --- Resolve script location and source libs ---
 
@@ -145,14 +145,6 @@ case "$COMMAND" in
 
   # Maintenance
   cleanup)        cmd_cleanup "$@" ;;
-
-  # Iteration (for-each, parallel, batch)
-  for-each)       cmd_for_each "$@" ;;
-  parallel)       cmd_parallel "$@" ;;
-  batch)          cmd_batch "$@" ;;
-
-  # Workers (parallel orchestration)
-  workers)        cmd_workers "$@" ;;
 
   # MCP server mode
   mcp)            _source_lib "mcp.sh"; cq_mcp_serve ;;

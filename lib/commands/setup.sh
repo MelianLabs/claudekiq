@@ -37,6 +37,9 @@ cmd_init() {
     # Auto-scan for agents and skills
     CQ_PROJECT_ROOT="$project_dir" cmd_scan >/dev/null 2>&1 || true
 
+    # Auto-install hooks
+    CQ_PROJECT_ROOT="$project_dir" _hooks_install >/dev/null 2>&1 || true
+
     cq_json_out --arg dir "$project_dir" '{status:"exists", directory:$dir}' || \
       cq_info "Already initialized in ${project_dir}"
     return 0
@@ -75,6 +78,9 @@ cmd_init() {
   # Auto-scan for agents and skills
   CQ_PROJECT_ROOT="$project_dir" cmd_scan >/dev/null 2>&1 || true
 
+  # Auto-install hooks
+  CQ_PROJECT_ROOT="$project_dir" _hooks_install >/dev/null 2>&1 || true
+
   cq_json_out --arg dir "$project_dir" '{status:"initialized", directory:$dir}' || {
     cq_info "Initialized .claudekiq/ in ${project_dir}"
     cq_info "Run /cq-setup to generate customized workflows based on your project's agents and skills."
@@ -87,7 +93,7 @@ _install_plugin_json() {
   local plugin_dir="${project_dir}/.claude-plugin"
   mkdir -p "$plugin_dir"
   jq -cn --arg home "$cq_home" '{
-    name:"claudekiq", version:"3.1.0",
+    name:"claudekiq", version:"3.1.2",
     description:"Filesystem-backed workflow engine for Claude Code",
     skills:[($home+"/skills/cq"),($home+"/skills/cq-agent"),($home+"/skills/cq-workers"),($home+"/skills/cq-setup")]
   }' > "${plugin_dir}/plugin.json"
@@ -133,6 +139,7 @@ cmd_hooks() {
     help|*)
       echo "Usage: cq hooks <install|uninstall>"
       echo ""
+      echo "  Hooks are installed automatically by 'cq init'."
       echo "  install    Merge cq hooks into .claude/settings.json"
       echo "  uninstall  Remove cq hooks from .claude/settings.json"
       ;;
@@ -179,6 +186,14 @@ _hooks_install() {
       "async": true
     }
   ],
+  "PostToolUse": [
+    {
+      "matcher": "Bash",
+      "type": "command",
+      "command": "bash -c 'input=$(cat); output=$(echo \"$input\" | jq -r \".stdout // empty\"); case \"$output\" in *\"step-done\"*|*\"completed\"*|*\"failed\"*|*\"gated\"*|*\"cq: \"*) if command -v osascript &>/dev/null; then msg=$(echo \"$output\" | head -1); osascript -e \"display notification \\\"$msg\\\" with title \\\"cq\\\" sound name \\\"Ping\\\"\" &>/dev/null; elif command -v notify-send &>/dev/null; then msg=$(echo \"$output\" | head -1); notify-send \"cq\" \"$msg\" &>/dev/null; fi;; esac; exit 0'",
+      "async": true
+    }
+  ],
   "WorktreeCreate": [
     {
       "type": "command",
@@ -202,6 +217,7 @@ HOOKS_JSON
     .hooks.SessionEnd = ((.hooks.SessionEnd // []) + $cq_hooks.SessionEnd | unique_by(.command)) |
     .hooks.PreToolUse = ((.hooks.PreToolUse // []) + $cq_hooks.PreToolUse | unique_by(.command)) |
     .hooks.SubagentStop = ((.hooks.SubagentStop // []) + $cq_hooks.SubagentStop | unique_by(.command)) |
+    .hooks.PostToolUse = ((.hooks.PostToolUse // []) + $cq_hooks.PostToolUse | unique_by(.command)) |
     .hooks.WorktreeCreate = ((.hooks.WorktreeCreate // []) + $cq_hooks.WorktreeCreate | unique_by(.command))
   ' <<< "$existing")
 
@@ -298,11 +314,6 @@ Configuration:
   config set <key> <value>          Set project config value
   config set --global <key> <value> Set global config value
 
-Iteration:
-  for-each --over=<list> --var=<name> --command=<cmd>
-  parallel --steps=<json_array> [--fail-strategy=wait_all|fail_fast]
-  batch --workflow=<name> --jobs=<json_array>
-
 Setup:
   init [--mcp]                      Initialize .claudekiq/ in current project
   scan                              Discover agents and skills
@@ -344,9 +355,6 @@ _help_for_command() {
     init)    echo "Usage: cq init [--mcp]" ;;
     scan)    echo "Usage: cq scan [--json]" ;;
     hooks)   echo "Usage: cq hooks install|uninstall" ;;
-    for-each) echo "Usage: cq for-each --over=<list> --var=<name> --command=<cmd> | cq for-each <run_id> <step_id>" ;;
-    parallel) echo "Usage: cq parallel --steps=<json_array> | cq parallel <run_id> <step_id>" ;;
-    batch)   echo "Usage: cq batch --workflow=<name> --jobs=<json_array> | cq batch <run_id> <step_id>" ;;
     schema)  echo "Usage: cq schema [command]" ;;
     cleanup) echo "Usage: cq cleanup" ;;
     *)       echo "Unknown command: $cmd. Run 'cq help' for usage." ;;
