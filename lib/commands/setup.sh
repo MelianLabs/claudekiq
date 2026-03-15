@@ -252,6 +252,7 @@ Configuration:
 
 Setup:
   init [--mcp]                      Initialize .claudekiq/ in current project
+  scan                              Discover agents, skills, and plugins
   version                           Show version
   help [command]                    Show help
   schema [command]                  Show command schema (JSON)
@@ -287,6 +288,7 @@ _help_for_command() {
     workflows) echo "Usage: cq workflows list|show|validate" ;;
     config)    echo "Usage: cq config | cq config get <key> | cq config set [--global] <key> <value>" ;;
     init)    echo "Usage: cq init [--mcp]" ;;
+    scan)    echo "Usage: cq scan [--json]" ;;
     schema)  echo "Usage: cq schema [command]" ;;
     cleanup) echo "Usage: cq cleanup" ;;
     *)       echo "Unknown command: $cmd. Run 'cq help' for usage." ;;

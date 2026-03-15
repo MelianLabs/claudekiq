@@ -3,7 +3,7 @@
 
 # Single source of truth for MCP-exposed commands (used by mcp.sh too)
 cq_command_list() {
-  echo "start status list log pause resume cancel retry step-done skip todos todo ctx add-step add-steps set-next workflows heartbeat check-stale cleanup workers"
+  echo "start status list log pause resume cancel retry step-done skip todos todo ctx add-step add-steps set-next workflows heartbeat check-stale cleanup workers scan"
 }
 
 cmd_schema() {
@@ -395,6 +395,19 @@ JSON
   "usage": "cq mcp",
   "parameters": [],
   "examples": ["cq mcp", "claude mcp add --transport stdio cq -- cq mcp"]
+}
+JSON
+      ;;
+    scan)
+      cat <<'JSON'
+{
+  "command": "scan",
+  "description": "Scan project for available agents, skills, and plugins. Writes results to .claudekiq/settings.json",
+  "usage": "cq scan",
+  "parameters": [],
+  "output": {"agents": "array", "skills": "array", "plugins": "array", "scanned_at": "string"},
+  "flags": ["--json"],
+  "examples": ["cq scan", "cq scan --json"]
 }
 JSON
       ;;

@@ -132,6 +132,9 @@ case "$COMMAND" in
   # Configuration
   config)         cmd_config "$@" ;;
 
+  # Discovery
+  scan)           cmd_scan "$@" ;;
+
   # Heartbeat / stale detection
   heartbeat)      cmd_heartbeat "$@" ;;
   check-stale)    cmd_check_stale "$@" ;;
