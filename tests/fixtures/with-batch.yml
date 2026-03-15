@@ -1,0 +1,25 @@
+name: with-batch
+description: Workflow with batch step
+
+defaults:
+  job_list: '[{"id":"J1","description":"job one"},{"id":"J2","description":"job two"}]'
+
+steps:
+  - id: prepare
+    name: Prepare
+    type: bash
+    target: "echo prepare"
+    gate: auto
+
+  - id: process-all
+    name: Process All
+    type: batch
+    jobs_from: "job_list"
+    max_workers: 3
+    gate: auto
+
+  - id: done
+    name: Done
+    type: bash
+    target: "echo done"
+    gate: auto

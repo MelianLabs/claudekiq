@@ -56,3 +56,31 @@ teardown() {
   run "$CQ" workflows validate "$FIXTURES/with-parallel.yml"
   [ "$status" -eq 0 ]
 }
+
+@test "parallel: standalone mode --json" {
+  local result
+  result=$("$CQ" --json parallel --steps='[{"id":"a","type":"bash","target":"echo hello"},{"id":"b","type":"bash","target":"echo world"}]' 2>/dev/null)
+  [ "$(echo "$result" | jq -r '.outcome')" = "pass" ]
+  [ "$(echo "$result" | jq '.results | length')" = "2" ]
+  [ "$(echo "$result" | jq -r '.results[0].outcome')" = "pass" ]
+  [ "$(echo "$result" | jq -r '.results[1].outcome')" = "pass" ]
+}
+
+@test "parallel: standalone with failure" {
+  local result
+  result=$("$CQ" --json parallel --steps='[{"id":"ok","type":"bash","target":"echo ok"},{"id":"bad","type":"bash","target":"exit 1"}]' 2>/dev/null) || true
+  [ "$(echo "$result" | jq -r '.outcome')" = "fail" ]
+  [ "$(echo "$result" | jq -r '.results[0].outcome')" = "pass" ]
+  [ "$(echo "$result" | jq -r '.results[1].outcome')" = "fail" ]
+}
+
+@test "parallel: workflow mode --json" {
+  local run_id
+  run_id=$("$CQ" start with-parallel --json 2>/dev/null | jq -r '.run_id')
+  "$CQ" step-done "$run_id" prepare pass >/dev/null 2>&1
+  local result
+  result=$("$CQ" --json parallel "$run_id" run-checks 2>/dev/null)
+  [ "$(echo "$result" | jq -r '.outcome')" = "pass" ]
+  [ "$(echo "$result" | jq -r '.run_id')" = "$run_id" ]
+  [ "$(echo "$result" | jq '.results | length')" = "2" ]
+}

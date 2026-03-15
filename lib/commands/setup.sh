@@ -265,6 +265,11 @@ Configuration:
   config set <key> <value>          Set project config value
   config set --global <key> <value> Set global config value
 
+Iteration:
+  for-each --over=<list> --var=<name> --command=<cmd>
+  parallel --steps=<json_array> [--fail-strategy=wait_all|fail_fast]
+  batch --workflow=<name> --jobs=<json_array>
+
 Setup:
   init [--mcp]                      Initialize .claudekiq/ in current project
   scan                              Discover agents, skills, and plugins
@@ -304,6 +309,9 @@ _help_for_command() {
     config)    echo "Usage: cq config | cq config get <key> | cq config set [--global] <key> <value>" ;;
     init)    echo "Usage: cq init [--mcp]" ;;
     scan)    echo "Usage: cq scan [--json]" ;;
+    for-each) echo "Usage: cq for-each --over=<list> --var=<name> --command=<cmd> | cq for-each <run_id> <step_id>" ;;
+    parallel) echo "Usage: cq parallel --steps=<json_array> | cq parallel <run_id> <step_id>" ;;
+    batch)   echo "Usage: cq batch --workflow=<name> --jobs=<json_array> | cq batch <run_id> <step_id>" ;;
     schema)  echo "Usage: cq schema [command]" ;;
     cleanup) echo "Usage: cq cleanup" ;;
     *)       echo "Unknown command: $cmd. Run 'cq help' for usage." ;;

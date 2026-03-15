@@ -255,6 +255,55 @@ _mcp_dispatch_tool() {
     scan)
       cmd_scan
       ;;
+    for-each)
+      local over delimiter var command run_id step_id
+      over=$(_mcp_arg "over" "$arguments")
+      delimiter=$(_mcp_arg "delimiter" "$arguments")
+      var=$(_mcp_arg "var" "$arguments")
+      command=$(_mcp_arg "command" "$arguments")
+      run_id=$(_mcp_arg "run_id" "$arguments")
+      step_id=$(_mcp_arg "step_id" "$arguments")
+      if [[ -n "$run_id" && -n "$step_id" ]]; then
+        cmd_for_each "$run_id" "$step_id"
+      else
+        args=()
+        [[ -n "$over" ]] && args+=("--over=$over")
+        [[ -n "$delimiter" ]] && args+=("--delimiter=$delimiter")
+        [[ -n "$var" ]] && args+=("--var=$var")
+        [[ -n "$command" ]] && args+=("--command=$command")
+        cmd_for_each "${args[@]}"
+      fi
+      ;;
+    parallel)
+      local steps_json fail_strategy run_id step_id
+      steps_json=$(_mcp_arg "steps" "$arguments")
+      fail_strategy=$(_mcp_arg "fail_strategy" "$arguments")
+      run_id=$(_mcp_arg "run_id" "$arguments")
+      step_id=$(_mcp_arg "step_id" "$arguments")
+      if [[ -n "$run_id" && -n "$step_id" ]]; then
+        cmd_parallel "$run_id" "$step_id"
+      else
+        args=()
+        [[ -n "$steps_json" ]] && args+=("--steps=$steps_json")
+        [[ -n "$fail_strategy" ]] && args+=("--fail-strategy=$fail_strategy")
+        cmd_parallel "${args[@]}"
+      fi
+      ;;
+    batch)
+      local workflow jobs_json run_id step_id
+      workflow=$(_mcp_arg "workflow" "$arguments")
+      jobs_json=$(_mcp_arg "jobs" "$arguments")
+      run_id=$(_mcp_arg "run_id" "$arguments")
+      step_id=$(_mcp_arg "step_id" "$arguments")
+      if [[ -n "$run_id" && -n "$step_id" ]]; then
+        cmd_batch "$run_id" "$step_id"
+      else
+        args=()
+        [[ -n "$workflow" ]] && args+=("--workflow=$workflow")
+        [[ -n "$jobs_json" ]] && args+=("--jobs=$jobs_json")
+        cmd_batch "${args[@]}"
+      fi
+      ;;
     workers)
       local subcommand session_id job_id action data
       subcommand=$(_mcp_arg "subcommand" "$arguments")

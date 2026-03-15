@@ -3,7 +3,7 @@
 
 # Single source of truth for MCP-exposed commands (used by mcp.sh too)
 cq_command_list() {
-  echo "start status list log pause resume cancel retry step-done skip todos todo ctx add-step add-steps set-next workflows heartbeat check-stale cleanup workers scan"
+  echo "start status list log pause resume cancel retry step-done skip todos todo ctx add-step add-steps set-next workflows heartbeat check-stale cleanup workers scan for-each parallel batch"
 }
 
 cmd_schema() {
@@ -461,6 +461,59 @@ JSON
     "cq workers answer abc12345 BUG-1 approve '{\"key\":\"value\"}'",
     "cq workers cleanup --max-age=86400"
   ]
+}
+JSON
+      ;;
+    for-each)
+      cat <<'JSON'
+{
+  "command": "for-each",
+  "description": "Iterate over a list, executing a command or sub-step for each item",
+  "usage": "cq for-each --over=<list> --var=<name> --command=<cmd> | cq for-each <run_id> <step_id>",
+  "parameters": [
+    {"name": "--over", "type": "string", "required": false, "description": "Comma-separated list to iterate over"},
+    {"name": "--delimiter", "type": "string", "required": false, "description": "List delimiter (default: ,)"},
+    {"name": "--var", "type": "string", "required": false, "description": "Variable name for each item (default: item)"},
+    {"name": "--command", "type": "string", "required": false, "description": "Command to run with {{var}} interpolation"},
+    {"name": "run_id", "type": "string", "required": false, "description": "Run ID (workflow mode)"},
+    {"name": "step_id", "type": "string", "required": false, "description": "Step ID (workflow mode)"}
+  ],
+  "flags": ["--json"],
+  "examples": ["cq for-each --over='a,b,c' --var=x --command='echo {{x}}'", "cq for-each abc12345 iterate"]
+}
+JSON
+      ;;
+    parallel)
+      cat <<'JSON'
+{
+  "command": "parallel",
+  "description": "Execute multiple sub-steps concurrently",
+  "usage": "cq parallel --steps=<json_array> | cq parallel <run_id> <step_id>",
+  "parameters": [
+    {"name": "--steps", "type": "json", "required": false, "description": "JSON array of step definitions"},
+    {"name": "--fail-strategy", "type": "string", "required": false, "description": "wait_all or fail_fast (default: wait_all)"},
+    {"name": "run_id", "type": "string", "required": false, "description": "Run ID (workflow mode)"},
+    {"name": "step_id", "type": "string", "required": false, "description": "Step ID (workflow mode)"}
+  ],
+  "flags": ["--json"],
+  "examples": ["cq parallel --steps='[{\"type\":\"bash\",\"target\":\"echo a\"},{\"type\":\"bash\",\"target\":\"echo b\"}]'"]
+}
+JSON
+      ;;
+    batch)
+      cat <<'JSON'
+{
+  "command": "batch",
+  "description": "Create a worker session for batch processing jobs",
+  "usage": "cq batch --workflow=<name> --jobs=<json_array> | cq batch <run_id> <step_id>",
+  "parameters": [
+    {"name": "--workflow", "type": "string", "required": false, "description": "Workflow template name"},
+    {"name": "--jobs", "type": "json", "required": false, "description": "JSON array of job definitions"},
+    {"name": "run_id", "type": "string", "required": false, "description": "Run ID (workflow mode)"},
+    {"name": "step_id", "type": "string", "required": false, "description": "Step ID (workflow mode)"}
+  ],
+  "flags": ["--json"],
+  "examples": ["cq batch --workflow=bugfix --jobs='[{\"id\":\"BUG-1\",\"description\":\"fix login\"}]'"]
 }
 JSON
       ;;

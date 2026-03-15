@@ -69,3 +69,38 @@ teardown() {
   run "$CQ" workflows validate "$FIXTURES/with-foreach.yml"
   [ "$status" -eq 0 ]
 }
+
+@test "for_each: standalone mode --json" {
+  local result
+  result=$("$CQ" --json for-each --over="a,b,c" --var=x --command="echo {{x}}" 2>/dev/null)
+  [ "$(echo "$result" | jq -r '.outcome')" = "pass" ]
+  [ "$(echo "$result" | jq '.results | length')" = "3" ]
+  [ "$(echo "$result" | jq -r '.results[0].item')" = "a" ]
+  [ "$(echo "$result" | jq -r '.results[1].item')" = "b" ]
+  [ "$(echo "$result" | jq -r '.results[2].item')" = "c" ]
+}
+
+@test "for_each: standalone stops on failure" {
+  local result
+  result=$("$CQ" --json for-each --over="ok,bad,skip" --var=x --command='[ "{{x}}" != "bad" ]' 2>/dev/null) || true
+  [ "$(echo "$result" | jq -r '.outcome')" = "fail" ]
+  # Should stop at "bad", so only 2 results
+  [ "$(echo "$result" | jq '.results | length')" = "2" ]
+}
+
+@test "for_each: standalone custom delimiter" {
+  local result
+  result=$("$CQ" --json for-each --over="a:b:c" --delimiter=":" --var=item --command="echo {{item}}" 2>/dev/null)
+  [ "$(echo "$result" | jq -r '.outcome')" = "pass" ]
+  [ "$(echo "$result" | jq '.results | length')" = "3" ]
+}
+
+@test "for_each: workflow mode --json" {
+  local run_id
+  run_id=$("$CQ" start with-foreach --json 2>/dev/null | jq -r '.run_id')
+  local result
+  result=$("$CQ" --json for-each "$run_id" iterate 2>/dev/null)
+  [ "$(echo "$result" | jq -r '.outcome')" = "pass" ]
+  [ "$(echo "$result" | jq -r '.run_id')" = "$run_id" ]
+  [ "$(echo "$result" | jq '.results | length')" = "3" ]
+}

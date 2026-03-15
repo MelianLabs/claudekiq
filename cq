@@ -128,6 +128,7 @@ case "$COMMAND" in
 
   # Template management
   workflows)      cmd_workflows "$@" ;;
+  validate)       cmd_validate "$@" ;;
 
   # Configuration
   config)         cmd_config "$@" ;;
@@ -141,6 +142,11 @@ case "$COMMAND" in
 
   # Maintenance
   cleanup)        cmd_cleanup "$@" ;;
+
+  # Iteration (for-each, parallel, batch)
+  for-each)       cmd_for_each "$@" ;;
+  parallel)       cmd_parallel "$@" ;;
+  batch)          cmd_batch "$@" ;;
 
   # Workers (parallel orchestration)
   workers)        cmd_workers "$@" ;;
