@@ -275,7 +275,7 @@ steps:
   - id: bump-version
     name: Bump Version
     type: agent
-    target: "@cq-dev"
+    target: ""
     args_template: "Bump CQ_VERSION in cq from current to {{new_version}}."
     gate: human
 

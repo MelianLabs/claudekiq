@@ -24,6 +24,13 @@
         "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); case \"$path\" in */.claudekiq/runs/*) echo \"Blocked: do not write to run files directly — use cq commands instead\" >&2; exit 2;; esac; exit 0'"
       }
     ],
+    "SubagentStop": [
+      {
+        "type": "command",
+        "command": "bash -c 'input=$(cat); desc=$(echo \"$input\" | jq -r \".description // empty\"); case \"$desc\" in Worker:*) if command -v osascript &>/dev/null; then osascript -e \"display notification \\\"$desc completed\\\" with title \\\"cq: Worker Done\\\" sound name \\\"Ping\\\"\" &>/dev/null; elif command -v notify-send &>/dev/null; then notify-send \"cq: Worker Done\" \"$desc completed\" &>/dev/null; fi;; esac; exit 0'",
+        "async": true
+      }
+    ],
     "WorktreeCreate": [
       {
         "type": "command",

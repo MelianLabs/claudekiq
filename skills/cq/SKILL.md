@@ -174,7 +174,8 @@ Use the **Agent tool** to spawn a specialized agent:
 1. **Determine subagent_type** from `target`:
    - If `target` is empty or doesn't start with `@`, execute inline as before (backward compat): do the work described in args_template yourself
    - Strip the `@` prefix (e.g., `@code-review` → `code-review`)
-   - Use the stripped name directly as `subagent_type` — Claude Code resolves it against `.claude/agents/<name>.md` definitions. If no matching agent exists, it falls back to `general-purpose`.
+   - Check for agent mapping: run `cq config get agent-mapping.<stripped_name>` or read `.claudekiq/agent-mapping.json` directly. If a mapping exists, use the mapped value as `subagent_type` (e.g., `code-review` → `code-reviewer`)
+   - If no mapping found, use the stripped name directly as `subagent_type` — Claude Code resolves it against `.claude/agents/<name>.md` definitions. If no matching agent exists, it falls back to `general-purpose`.
 
 2. **Invoke the Agent tool:**
    - `description`: step name (max 5 words)

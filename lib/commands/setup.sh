@@ -47,8 +47,9 @@ cmd_init() {
   mkdir -p "${project_dir}/.claudekiq/runs"
   mkdir -p "${project_dir}/.claudekiq/plugins"
 
-  # Create default settings.json
+  # Create default settings.json and agent mapping
   echo '{}' > "${project_dir}/.claudekiq/settings.json"
+  echo '{}' > "${project_dir}/.claudekiq/agent-mapping.json"
 
   # Append to .gitignore
   local gitignore="${project_dir}/.gitignore"
@@ -121,11 +122,17 @@ _install_agents() {
   local agents_dir="${project_dir}/.claude/agents"
   mkdir -p "$agents_dir"
 
-  # Install cq-dev agent definition
-  local src="${CQ_SCRIPT_DIR}/.claude/agents/cq-dev.md"
-  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../.claude/agents/cq-dev.md"
-  if [[ -f "$src" ]]; then
-    cp "$src" "${agents_dir}/cq-dev.md"
+  # Install all agent definitions from cq distribution
+  local agents_src="${CQ_SCRIPT_DIR}/.claude/agents"
+  [[ ! -d "$agents_src" ]] && agents_src="${CQ_SCRIPT_DIR}/../.claude/agents"
+  if [[ -d "$agents_src" ]]; then
+    cp "$agents_src"/*.md "$agents_dir/" 2>/dev/null || true
+  fi
+
+  # Create empty agent-mapping.json if it doesn't exist
+  local mapping_file="${project_dir}/.claudekiq/agent-mapping.json"
+  if [[ ! -f "$mapping_file" ]]; then
+    echo '{}' > "$mapping_file"
   fi
 }
 

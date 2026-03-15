@@ -438,3 +438,23 @@ cq_marker() {
   config=$(cq_resolve_config)
   jq -r --arg s "$status" '.markers[$s] // "?"' <<< "$config"
 }
+
+# --- Agent target mapping ---
+
+# Resolve an agent target name through the optional mapping file.
+# Usage: mapped=$(cq_resolve_agent_target "code-review")
+# Returns the mapped name if found, or the original name if no mapping exists.
+cq_resolve_agent_target() {
+  local name="$1"
+  local mapping_file="${CQ_PROJECT_ROOT}/.claudekiq/agent-mapping.json"
+
+  if [[ -f "$mapping_file" ]]; then
+    local mapped
+    mapped=$(jq -r --arg n "$name" '.[$n] // empty' "$mapping_file" 2>/dev/null)
+    if [[ -n "$mapped" ]]; then
+      echo "$mapped"
+      return
+    fi
+  fi
+  echo "$name"
+}

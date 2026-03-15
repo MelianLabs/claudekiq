@@ -9,7 +9,7 @@ steps:
   - id: plan
     name: Plan Implementation
     type: agent
-    target: "@cq-dev"
+    target: ""
     args_template: "Read technical_details.md and plan implementation for: {{description}}. Identify which lib files need changes and what tests to add."
     gate: human
 
@@ -22,7 +22,7 @@ steps:
   - id: implement
     name: Implement Changes
     type: agent
-    target: "@cq-dev"
+    target: ""
     args_template: "Implement: {{description}}. Follow patterns in existing lib/*.sh files. Update lib/schema.sh if adding a command."
     background: true
     gate: human
@@ -39,7 +39,7 @@ steps:
   - id: fix-code
     name: Fix Failing Tests
     type: agent
-    target: "@cq-dev"
+    target: ""
     args_template: "Fix failing tests. Run: bats tests/ to see failures. Fix the code (not the tests) unless the tests are wrong."
     gate: auto
     next: run-tests
@@ -56,7 +56,7 @@ steps:
   - id: fix-lint
     name: Fix ShellCheck Issues
     type: agent
-    target: "@cq-dev"
+    target: ""
     args_template: "Fix shellcheck warnings in cq and lib/*.sh files."
     gate: auto
     next: shellcheck
@@ -64,7 +64,7 @@ steps:
   - id: write-tests
     name: Add/Update Tests
     type: agent
-    target: "@cq-dev"
+    target: ""
     args_template: "Ensure test coverage for: {{description}}. Add tests to the appropriate tests/test_*.bats file."
     gate: human
 

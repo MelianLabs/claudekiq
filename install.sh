@@ -60,7 +60,7 @@ else
   mkdir -p "${CQ_HOME}/skills/cq-workers"
   curl -fsSL "${REPO_URL}/skills/cq-workers/SKILL.md" -o "${CQ_HOME}/skills/cq-workers/SKILL.md"
   mkdir -p "${CQ_HOME}/.claude/agents"
-  curl -fsSL "${REPO_URL}/.claude/agents/cq-dev.md" -o "${CQ_HOME}/.claude/agents/cq-dev.md"
+  curl -fsSL "${REPO_URL}/.claude/agents/cq-worker.md" -o "${CQ_HOME}/.claude/agents/cq-worker.md"
   mkdir -p "${CQ_HOME}/.claude/hooks"
   curl -fsSL "${REPO_URL}/.claude/hooks/PostToolUse.sh" -o "${CQ_HOME}/.claude/hooks/PostToolUse.sh"
   chmod +x "${CQ_HOME}/.claude/hooks/PostToolUse.sh"

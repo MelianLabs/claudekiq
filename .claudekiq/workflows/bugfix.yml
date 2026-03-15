@@ -9,7 +9,7 @@ steps:
   - id: investigate
     name: Investigate Bug
     type: agent
-    target: "@cq-dev"
+    target: ""
     args_template: "Investigate bug: {{description}}. Read the relevant code in lib/*.sh, run tests with: bats tests/ to reproduce, and identify root cause."
     gate: human
     outputs: [root_cause, affected_files]
@@ -17,7 +17,7 @@ steps:
   - id: fix
     name: Implement Fix
     type: agent
-    target: "@cq-dev"
+    target: ""
     args_template: "Fix bug: {{description}}. Root cause: {{root_cause}}. Affected files: {{affected_files}}. Make minimal changes."
     gate: human
 

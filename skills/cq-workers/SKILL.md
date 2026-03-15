@@ -32,6 +32,7 @@ Each job in the JSON array must have at least `id` and `description`. Additional
 ```
 Agent tool call:
   description: "Worker: <job_id>"
+  subagent_type: "cq-worker"
   isolation: "worktree"
   run_in_background: true
   prompt: <child agent prompt below>
