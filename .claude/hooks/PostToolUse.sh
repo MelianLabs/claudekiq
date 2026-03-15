@@ -24,7 +24,7 @@ notify() {
   fi
 }
 
-# Only care about cq step-done and cq todos commands
+# Handle cq commands that produce notable events
 case "$command_str" in
   *"cq step-done"*)
     # Parse the status from step-done JSON output
@@ -42,6 +42,25 @@ case "$command_str" in
         notify "cq: Workflow Failed" "Failed at step '$step'" "Basso"
         ;;
     esac
+    ;;
+  *"cq start"*)
+    template=$(echo "$tool_output" | jq -r '.template // empty' 2>/dev/null) || template=""
+    if [[ -n "$template" ]]; then
+      notify "cq: Workflow Started" "Started workflow '$template'" "Ping"
+    fi
+    ;;
+  *"cq cancel"*)
+    run_id=$(echo "$tool_output" | jq -r '.run_id // empty' 2>/dev/null) || run_id=""
+    if [[ -n "$run_id" ]]; then
+      notify "cq: Workflow Cancelled" "Run $run_id cancelled" "Purr"
+    fi
+    ;;
+  *"cq retry"*)
+    run_id=$(echo "$tool_output" | jq -r '.run_id // empty' 2>/dev/null) || run_id=""
+    step=$(echo "$tool_output" | jq -r '.retry_step // empty' 2>/dev/null) || step=""
+    if [[ -n "$run_id" ]]; then
+      notify "cq: Workflow Retrying" "Run $run_id retrying from '$step'" "Ping"
+    fi
     ;;
   *"cq todos"*)
     todo_count=$(echo "$tool_output" | jq -r 'if type == "array" then [.[] | select(.status == "pending")] | length else 0 end' 2>/dev/null) || todo_count=0

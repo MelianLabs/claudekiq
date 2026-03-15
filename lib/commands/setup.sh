@@ -23,6 +23,7 @@ cmd_init() {
     # Already initialized — still update skills, hooks, and gitignore in case of upgrades
     _install_skill "$project_dir"
     _install_workers_skill "$project_dir"
+    _install_init_skill "$project_dir"
     _install_agents "$project_dir"
     _install_hooks "$project_dir"
     _install_settings "$project_dir"
@@ -72,6 +73,7 @@ cmd_init() {
   # Install Claude Code skills, agents, hooks, and settings
   _install_skill "$project_dir"
   _install_workers_skill "$project_dir"
+  _install_init_skill "$project_dir"
   _install_agents "$project_dir"
   _install_hooks "$project_dir"
   _install_settings "$project_dir"
@@ -84,8 +86,10 @@ cmd_init() {
   # Auto-scan for agents, skills, and plugins
   CQ_PROJECT_ROOT="$project_dir" cmd_scan >/dev/null 2>&1 || true
 
-  cq_json_out --arg dir "$project_dir" '{status:"initialized", directory:$dir}' || \
+  cq_json_out --arg dir "$project_dir" '{status:"initialized", directory:$dir}' || {
     cq_info "Initialized .claudekiq/ in ${project_dir}"
+    cq_info "Run /cq-init to generate customized workflows based on your project's agents and skills."
+  }
 }
 
 _install_skill() {
@@ -120,6 +124,21 @@ _install_workers_skill() {
   fi
 
   cq_die "Cannot find skills/cq-workers/SKILL.md — please reinstall cq"
+}
+
+_install_init_skill() {
+  local project_dir="$1"
+  local skill_dir="${project_dir}/.claude/skills/cq-init"
+  mkdir -p "$skill_dir"
+
+  local src="${CQ_SCRIPT_DIR}/skills/cq-init/SKILL.md"
+  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq-init/SKILL.md"
+  if [[ -f "$src" ]]; then
+    cp "$src" "${skill_dir}/SKILL.md"
+    return
+  fi
+
+  # cq-init is optional — don't die if not found
 }
 
 _install_agents() {
