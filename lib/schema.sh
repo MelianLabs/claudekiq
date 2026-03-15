@@ -24,7 +24,7 @@ cmd_schema() {
       cat <<'JSON'
 {
   "command": "start",
-  "description": "Start a new workflow run from a template",
+  "description": "Start a new workflow run from a template. Workflows support prompt/context fields on agent steps, params section, and model validation.",
   "usage": "cq start <template> [--key=val]...",
   "parameters": [
     {"name": "template", "type": "string", "required": true, "description": "Workflow template name"},
@@ -33,6 +33,10 @@ cmd_schema() {
   ],
   "output": {"run_id": "string", "status": "string", "template": "string"},
   "flags": ["--json", "--headless"],
+  "notes": {
+    "step_fields": "Steps support: prompt (agent goal), context (list of context keys), model (opus|sonnet|haiku), resume (boolean), outputs (expected output keys)",
+    "params": "Top-level params section documents workflow parameters for interactive prompting"
+  },
   "examples": ["cq start feature --story_id=12345 --stack=rails", "cq start bugfix --story_id=67890 --json"]
 }
 JSON
@@ -402,10 +406,10 @@ JSON
       cat <<'JSON'
 {
   "command": "scan",
-  "description": "Scan project for available agents, skills, and plugins. Writes results to .claudekiq/settings.json",
+  "description": "Scan project for available agents, skills, plugins, and stack info. Writes results to .claudekiq/settings.json",
   "usage": "cq scan",
   "parameters": [],
-  "output": {"agents": "array", "skills": "array", "plugins": "array", "scanned_at": "string"},
+  "output": {"agents": "array", "skills": "array", "plugins": "array", "stack": "object", "scanned_at": "string"},
   "flags": ["--json"],
   "examples": ["cq scan", "cq scan --json"]
 }

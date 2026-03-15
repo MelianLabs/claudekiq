@@ -28,7 +28,9 @@ steps:
     name: Implement Changes
     type: agent
     target: "@dev"
+    prompt: "Implement the required changes."
     gate: human
+    model: sonnet
 
   - id: run-tests
     name: Run Tests

@@ -12,6 +12,7 @@ setup_test_project() {
   # Copy minimal fixture
   cp "$FIXTURES"/minimal.yml .claudekiq/workflows/
   cp "$FIXTURES"/with_routing.yml .claudekiq/workflows/
+  cp "$FIXTURES"/with-agents.yml .claudekiq/workflows/ 2>/dev/null || true
 }
 
 teardown_test_project() {

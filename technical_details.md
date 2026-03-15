@@ -110,7 +110,13 @@ Uninstall: `rm -rf ~/.cq` and remove the PATH entry.
   },
 
   // Step fields recognized in workflow YAML
-  "step_fields": ["name", "type", "target", "args_template", "gate", "model", "background"],
+  "step_fields": ["name", "type", "target", "prompt", "context", "args_template", "gate", "model", "background", "resume", "outputs"],
+
+  // Known AI models for validation
+  "models": ["opus", "sonnet", "haiku"],
+
+  // Default model for agent steps without explicit model
+  "default_model": "opus",
 
   // Edge keys for routing
   "edge_keys": ["next", "on_pass", "on_fail"],
@@ -148,40 +154,47 @@ cq config set --global <key> <value>  # Set in global config
 
 ## 5. Workflow Definition Format
 
-Workflows are YAML files with this structure:
+Workflows are YAML files with support for `prompt:`, `context:`, `params:`, `model:`, and `resume:` fields for goal-oriented agent orchestration.
 
 ```yaml
-name: feature
-description: Feature development workflow
+name: example
+description: Example workflow
 
-# Context variables with defaults (overridable at start time)
+# Documented workflow parameters (used by /cq skill for interactive prompting)
+params:
+  description: "What to build"
+  branch_name: "Feature branch name"
+
+# Context variable defaults (overridable at start time via --key=val)
 defaults:
-  stack: rails
-  max_test_retries: 5
+  description: ""
+  branch_name: ""
 
 steps:
-  - id: read-story
-    name: Read Story
-    type: skill
-    target: "/lt"
-    args_template: "story show {{project_id}} {{story_id}}"
-    gate: auto
-    outputs:
-      story_type: "parsed from result"
-      story_title: "parsed from result"
+  - id: plan
+    name: Plan Implementation
+    type: agent
+    prompt: "Plan implementation for: {{description}}. Identify files, approach, and risks."
+    context: [description]           # context keys injected into agent prompt
+    gate: human
+    model: sonnet                    # validated against known models
 
   - id: create-branch
     name: Create Branch
     type: bash
-    target: "git branch {{branch_name}} origin/main"
+    target: "git checkout -b feature/{{branch_name}} main"
     gate: auto
 
   - id: implement
-    name: Implement Changes
+    name: Implement
     type: agent
-    target: "@{{stack}}-dev"
-    args_template: "Implement: {{story_title}}"
-    gate: human
+    target: "@implementer"           # spawns specific agent
+    prompt: "Implement the plan. All tests must pass."
+    context: [description, plan_output]
+    gate: review
+    max_visits: 3
+    model: opus
+    resume: true                     # opt-in agent resume on retry
 
   - id: run-tests
     name: Run Tests
@@ -195,23 +208,42 @@ steps:
   - id: code-review
     name: Code Review
     type: manual
-    description: "Review changes for {{story_title}}"
+    description: "Review changes"
     gate: human
 
 # Conditional routing (evaluated after step completion)
 routing:
-  read-story:
-    - when: "{{story_type}} == bug"
+  plan:
+    - when: "{{issue_type}} == bug"
       goto: investigate
-    - when: "{{story_type}} == feature"
+    - when: "{{issue_type}} == feature"
       goto: create-branch
 ```
+
+### Step Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique step identifier (required) |
+| `name` | string | Human-readable name |
+| `type` | string | Step type: `agent`, `bash`, `skill`, `manual`, `subflow`, `for_each`, `parallel`, `batch`, or custom |
+| `prompt` | string | Goal description for agent steps. Supports `{{interpolation}}` |
+| `context` | array | List of context keys to inject into agent prompt |
+| `target` | string | Command (bash), agent name (`@name`), skill name, or workflow name |
+| `args_template` | string | **Deprecated** — use `prompt` instead |
+| `gate` | string | `auto`, `human`, or `review` |
+| `model` | string | AI model: `opus`, `sonnet`, `haiku` |
+| `resume` | boolean | If true, agent can be resumed on retry (stores agentId) |
+| `outputs` | object | Expected output keys for structured result extraction |
+| `max_visits` | integer | Max retry visits for `review` gate |
+| `background` | boolean | Run step in background |
+| `on_pass` / `on_fail` / `next` | string | Routing edges |
 
 ### Step types
 
 | Type | `target` is | Execution |
 |------|-------------|-----------|
-| `agent` | Agent name (e.g., `@rails-dev`) | Claude Code Agent tool |
+| `agent` | Agent name (e.g., `@rails-dev`) or omitted | Claude Code Agent tool. Uses `prompt:` for goals. |
 | `skill` | Skill name (e.g., `/lt`) | Claude Code Skill tool |
 | `bash` | Shell command | Bash execution |
 | `manual` | — (uses `description`) | Creates human action, waits |
@@ -250,9 +282,15 @@ Each run gets a directory named with an 8-character short UUID (e.g., `a1b2c3d4`
   "created_at": "2026-03-13T10:00:00Z",
   "updated_at": "2026-03-13T10:05:00Z",
   "current_step": "implement",
-  "started_by": "user"
+  "started_by": "user",
+  "params": {
+    "description": "What to build",
+    "branch_name": "Feature branch name"
+  }
 }
 ```
+
+The `params` field is present when the workflow defines a `params:` section. It documents workflow parameters for interactive prompting by the `/cq` skill.
 
 Status values: `queued`, `running`, `paused`, `completed`, `failed`, `cancelled`.
 
@@ -427,32 +465,38 @@ This lets Claude Code agents call `cq schema` to discover available commands and
 
 ## 9. Runner Loop (Claude Code Integration)
 
-The runner is the bridge between `cq` (state management) and Claude Code (execution). It is invoked as a Claude Code skill (`/cq` or `/claudekiq`) and follows this loop:
+The runner is the bridge between `cq` (state management) and Claude Code (execution). It is split into two skills:
+
+### `/cq` skill — Slim State Machine (~120 lines)
 
 ```
-1. cq status --json                       # Read global state
-2. If todos pending → present to user, wait for decision, apply it
-3. For each running workflow (by priority):
-   a. cq status <run_id> --json           # Load current step + context
-   b. Determine current step
-   c. Interpolate {{vars}} in target/args from ctx.json
-   d. Execute step:
-      - agent → Agent tool
-      - skill → Skill tool
-      - bash  → Bash tool
-      - manual → cq create-todo, then yield
-      - subflow → cq add-steps, then continue
-      - custom → Bash: .claudekiq/plugins/<type>.sh
-   e. Capture outputs → cq ctx set <key> <val> <run_id>
-   f. cq step-done <run_id> <step_id> pass|fail
-   g. Evaluate gate logic:
-      - auto → continue loop
-      - human → yield (user will resume via todo)
-      - review → check visits vs max_visits, route accordingly
-   h. Evaluate conditional routing
-   i. If not end of workflow → loop to (b)
-4. cq status --json                       # Show updated state
+READ STATE → CHECK TERMINAL → CHECK GATES → DISPATCH STEP → EXTRACT RESULTS → ADVANCE → LOOP
 ```
+
+Dispatch by step type:
+- `bash` → Run command via Bash tool. Exit code = outcome.
+- `agent` → Invoke `/cq-agent` sub-skill with step JSON. AI evaluates results.
+- `skill` → Invoke Skill tool with target name.
+- `manual` → Display description, gate system creates TODO.
+- `subflow` → `cq add-steps`.
+- `for_each`/`parallel`/`batch` → CLI for bash children, `/cq-agent` for agent children.
+- Custom type → Resolve via `cq_resolve_step_type`, dispatch accordingly.
+
+### `/cq-agent` sub-skill — Agent Step Handler
+
+Handles a single agent step autonomously:
+
+1. Receive step definition (prompt, context keys, model, target, resume flag)
+2. Build agent prompt via `cq_build_step_prompt`: assemble `prompt:` + resolved `context:` variables
+3. Spawn Agent tool with model, target, and assembled prompt
+4. If `resume: true` and saved agentId exists, try `Agent(resume: <id>)` first
+5. Evaluate completion: AI judges whether agent achieved the goal
+6. Structured summarization: extract results into workflow context
+7. Return outcome (pass/fail) + result JSON + agentId
+
+### Design principle
+
+The runner does NOT micromanage agent execution. Agent steps define goals via `prompt:` — Claude decides how to achieve them. The `/cq-agent` sub-skill provides structure (heartbeat, resume, result extraction) without limiting autonomy.
 
 ### Headless mode (CI)
 

@@ -230,7 +230,9 @@ cq_default_config() {
     "queued": "📋", "paused": "⏯️", "cancelled": "🚫",
     "completed": "✅", "blocked": "⏳"
   },
-  "step_fields": ["name", "type", "target", "args_template", "gate", "model", "background"],
+  "step_fields": ["name", "type", "target", "prompt", "context", "args_template", "gate", "model", "background", "resume", "outputs"],
+  "models": ["opus", "sonnet", "haiku"],
+  "default_model": "sonnet",
   "edge_keys": ["next", "on_pass", "on_fail"],
   "notifications": {
     "on_gate": null,
@@ -459,6 +461,60 @@ cq_marker() {
   local config
   config=$(cq_resolve_config)
   jq -r --arg s "$status" '.markers[$s] // "?"' <<< "$config"
+}
+
+# --- Model validation ---
+
+# Check if a model name is valid (known model or configured in settings)
+cq_valid_model() {
+  local model="$1"
+  [[ -z "$model" ]] && return 1
+
+  # Check against built-in models
+  local config models
+  config=$(cq_resolve_config)
+  models=$(jq -r '.models // [] | .[]' <<< "$config")
+  while IFS= read -r m; do
+    [[ "$model" == "$m" ]] && return 0
+  done <<< "$models"
+
+  return 1
+}
+
+# Build a complete prompt for an agent step by assembling the step's prompt
+# field with resolved context variables.
+# Usage: cq_build_step_prompt <step_json> <ctx_json>
+cq_build_step_prompt() {
+  local step_json="$1" ctx_json="$2"
+
+  local prompt context_keys
+  prompt=$(jq -r '.prompt // empty' <<< "$step_json")
+  context_keys=$(jq -r '.context // [] | .[]' <<< "$step_json")
+
+  # Start with the step prompt (interpolated)
+  local result=""
+  if [[ -n "$prompt" ]]; then
+    result=$(cq_interpolate "$prompt" "$ctx_json")
+  fi
+
+  # Append context key values if specified
+  if [[ -n "$context_keys" ]]; then
+    local ctx_section=""
+    local key
+    while IFS= read -r key; do
+      [[ -z "$key" ]] && continue
+      local val
+      val=$(jq -r --arg k "$key" '.[$k] // empty' <<< "$ctx_json" 2>/dev/null)
+      if [[ -n "$val" ]]; then
+        ctx_section="${ctx_section}\n${key}: ${val}"
+      fi
+    done <<< "$context_keys"
+    if [[ -n "$ctx_section" ]]; then
+      result="${result}\n\nContext:${ctx_section}"
+    fi
+  fi
+
+  printf '%b' "$result"
 }
 
 # --- Step type resolution ---

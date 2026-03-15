@@ -35,6 +35,9 @@ cmd_start() {
   # Validate agent targets
   _validate_agent_targets "$wf_json"
 
+  # Validate model fields (warn only, don't block)
+  _validate_step_models "$wf_json"
+
   # Determine priority
   if [[ -z "$priority" ]]; then
     priority=$(jq -r '.default_priority // empty' <<< "$wf_json")
@@ -77,9 +80,11 @@ cmd_start() {
     idx=$((idx + 2))
   done
 
-  # Write meta.json
+  # Write meta.json (include params if present)
   local first_step
   first_step=$(jq -r '.steps[0].id' <<< "$wf_json")
+  local params
+  params=$(jq '.params // null' <<< "$wf_json")
   local meta
   meta=$(jq -cn \
     --arg id "$run_id" \
@@ -90,9 +95,11 @@ cmd_start() {
     --arg updated_at "$ts" \
     --arg current_step "$first_step" \
     --arg started_by "user" \
+    --argjson params "$params" \
     '{id:$id, template:$template, status:$status, priority:$priority,
       created_at:$created_at, updated_at:$updated_at,
-      current_step:$current_step, started_by:$started_by}')
+      current_step:$current_step, started_by:$started_by}
+      + (if $params != null then {params:$params} else {} end)')
   cq_write_json "${run_dir}/meta.json" "$meta"
 
   # Write ctx.json
@@ -175,6 +182,24 @@ _validate_agent_targets() {
     [[ -z "$avail_list" ]] && avail_list="(none found)"
     cq_warn "Agent '${target}' not found. Available agents: ${avail_list}. Run 'cq scan' to update."
   done <<< "$targets"
+}
+
+# Validate model fields on steps (warn only)
+_validate_step_models() {
+  local wf_json="$1"
+  local models
+  models=$(jq -r '.steps[] | select(.model != null) | "\(.id):\(.model)"' <<< "$wf_json" 2>/dev/null)
+  [[ -z "$models" ]] && return 0
+
+  local entry
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    local step_id="${entry%%:*}"
+    local model="${entry#*:}"
+    if ! cq_valid_model "$model"; then
+      cq_warn "Step '${step_id}' has unknown model '${model}'. Known models: $(cq_resolve_config | jq -r '.models // [] | join(", ")')"
+    fi
+  done <<< "$models"
 }
 
 _count_running_runs() {

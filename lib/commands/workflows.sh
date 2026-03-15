@@ -112,6 +112,42 @@ cmd_workflows_validate() {
     [[ -n "$err" ]] && errors+=("$err")
   done <<< "$step_errors"
 
+  # Validate agent steps have prompt or target
+  local agent_step_errors
+  agent_step_errors=$(jq -r '
+    .steps[] | select(.type == "agent") |
+    if (.prompt == null or .prompt == "") and (.target == null or .target == "") then
+      "Agent step '\''\(.id)'\'': needs either '\''prompt'\'' or '\''target'\'' field"
+    else empty end
+  ' <<< "$wf_json" 2>/dev/null)
+  while IFS= read -r err; do
+    [[ -n "$err" ]] && errors+=("$err")
+  done <<< "$agent_step_errors"
+
+  # Warn on deprecated args_template usage
+  local deprecated_warnings
+  deprecated_warnings=$(jq -r '
+    .steps[] | select(.args_template != null and .args_template != "") |
+    "Step '\''\(.id)'\'': '\''args_template'\'' is deprecated, use '\''prompt'\'' instead"
+  ' <<< "$wf_json" 2>/dev/null)
+  while IFS= read -r warn; do
+    [[ -n "$warn" ]] && cq_warn "$warn"
+  done <<< "$deprecated_warnings"
+
+  # Validate model fields against known models
+  local model_errors
+  model_errors=$(jq -r '.steps[] | select(.model != null and .model != "") | "\(.id):\(.model)"' <<< "$wf_json" 2>/dev/null)
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    local sid="${entry%%:*}"
+    local smodel="${entry#*:}"
+    if ! cq_valid_model "$smodel"; then
+      local known_models
+      known_models=$(cq_resolve_config | jq -r '.models // [] | join(", ")')
+      errors+=("Step '${sid}': unknown model '${smodel}'. Known: ${known_models}")
+    fi
+  done <<< "$model_errors"
+
   # Check step types against known types + plugins
   local type_warnings
   type_warnings=$(jq -r '.steps[].type // empty' <<< "$wf_json" | sort -u | while IFS= read -r stype; do
