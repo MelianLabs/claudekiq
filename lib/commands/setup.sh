@@ -148,47 +148,73 @@ _hooks_install() {
   local settings_file="${project_dir}/.claude/settings.json"
   mkdir -p "${project_dir}/.claude"
 
-  # Define cq hooks
+  # Define cq hooks (matcher + hooks[] format)
   local cq_hooks
   cq_hooks=$(cat <<'HOOKS_JSON'
 {
   "SessionEnd": [
     {
-      "type": "command",
-      "command": "cq check-stale --timeout=0 --mark 2>/dev/null || true",
-      "async": true
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "cq check-stale --timeout=0 --mark 2>/dev/null || true",
+          "async": true
+        }
+      ]
     }
   ],
   "PreToolUse": [
     {
       "matcher": "Bash",
-      "type": "command",
-      "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: deleting .claudekiq directory — use cq cleanup instead\" >&2; exit 0; else echo \"Blocked: cannot delete .claudekiq directory — use cq cleanup instead\" >&2; exit 2; fi;; *\"git checkout\"*|*\"git switch\"*) if ls .claudekiq/runs/*/meta.json 2>/dev/null | head -1 | grep -q .; then for f in .claudekiq/runs/*/meta.json; do status=$(jq -r .status \"$f\" 2>/dev/null); if [ \"$status\" = \"running\" ] || [ \"$status\" = \"gated\" ]; then if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: git checkout/switch while cq workflows are running/gated.\" >&2; exit 0; else echo \"Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first.\" >&2; exit 2; fi; fi; done; fi;; *\"Edit\"*|*\"Write\"*) :;; esac; exit 0'"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: deleting .claudekiq directory — use cq cleanup instead\" >&2; exit 0; else echo \"Blocked: cannot delete .claudekiq directory — use cq cleanup instead\" >&2; exit 2; fi;; *\"git checkout\"*|*\"git switch\"*) if ls .claudekiq/runs/*/meta.json 2>/dev/null | head -1 | grep -q .; then for f in .claudekiq/runs/*/meta.json; do status=$(jq -r .status \"$f\" 2>/dev/null); if [ \"$status\" = \"running\" ] || [ \"$status\" = \"gated\" ]; then if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: git checkout/switch while cq workflows are running/gated.\" >&2; exit 0; else echo \"Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first.\" >&2; exit 2; fi; fi; done; fi;; *\"Edit\"*|*\"Write\"*) :;; esac; exit 0'"
+        }
+      ]
     },
     {
       "matcher": "Edit",
-      "type": "command",
-      "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$path\" in */.claudekiq/runs/*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: editing run files directly — use cq commands instead\" >&2; exit 0; else echo \"Blocked: do not edit run files directly — use cq commands instead\" >&2; exit 2; fi;; esac; exit 0'"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$path\" in */.claudekiq/runs/*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: editing run files directly — use cq commands instead\" >&2; exit 0; else echo \"Blocked: do not edit run files directly — use cq commands instead\" >&2; exit 2; fi;; esac; exit 0'"
+        }
+      ]
     },
     {
       "matcher": "Write",
-      "type": "command",
-      "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$path\" in */.claudekiq/runs/*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: writing to run files directly — use cq commands instead\" >&2; exit 0; else echo \"Blocked: do not write to run files directly — use cq commands instead\" >&2; exit 2; fi;; esac; exit 0'"
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$path\" in */.claudekiq/runs/*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: writing to run files directly — use cq commands instead\" >&2; exit 0; else echo \"Blocked: do not write to run files directly — use cq commands instead\" >&2; exit 2; fi;; esac; exit 0'"
+        }
+      ]
     }
   ],
   "PostToolUse": [
     {
       "matcher": "Bash",
-      "type": "command",
-      "command": "bash -c 'input=$(cat); output=$(echo \"$input\" | jq -r \".stdout // empty\"); case \"$output\" in *\"step-done\"*|*\"completed\"*|*\"failed\"*|*\"gated\"*|*\"cq: \"*) if command -v osascript &>/dev/null; then msg=$(echo \"$output\" | head -1); osascript -e \"display notification \\\"$msg\\\" with title \\\"cq\\\" sound name \\\"Ping\\\"\" &>/dev/null; elif command -v notify-send &>/dev/null; then msg=$(echo \"$output\" | head -1); notify-send \"cq\" \"$msg\" &>/dev/null; fi;; esac; exit 0'",
-      "async": true
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash -c 'input=$(cat); output=$(echo \"$input\" | jq -r \".stdout // empty\"); case \"$output\" in *\"step-done\"*|*\"completed\"*|*\"failed\"*|*\"gated\"*|*\"cq: \"*) if command -v osascript &>/dev/null; then msg=$(echo \"$output\" | head -1); osascript -e \"display notification \\\"$msg\\\" with title \\\"cq\\\" sound name \\\"Ping\\\"\" &>/dev/null; elif command -v notify-send &>/dev/null; then msg=$(echo \"$output\" | head -1); notify-send \"cq\" \"$msg\" &>/dev/null; fi;; esac; exit 0'",
+          "async": true
+        }
+      ]
     }
   ],
   "WorktreeCreate": [
     {
-      "type": "command",
-      "command": "bash -c 'input=$(cat); worktree_path=$(echo \"$input\" | jq -r \".worktree_path // empty\"); if [ -n \"$worktree_path\" ]; then cd \"$worktree_path\" && cq init 2>/dev/null; fi; exit 0'",
-      "async": true
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash -c 'input=$(cat); worktree_path=$(echo \"$input\" | jq -r \".worktree_path // empty\"); if [ -n \"$worktree_path\" ]; then cd \"$worktree_path\" && cq init 2>/dev/null; fi; exit 0'",
+          "async": true
+        }
+      ]
     }
   ]
 }
@@ -204,10 +230,10 @@ HOOKS_JSON
   local updated
   updated=$(jq --argjson cq_hooks "$cq_hooks" '
     .hooks = (.hooks // {}) |
-    .hooks.SessionEnd = ((.hooks.SessionEnd // []) + $cq_hooks.SessionEnd | unique_by(.command)) |
-    .hooks.PreToolUse = ((.hooks.PreToolUse // []) + $cq_hooks.PreToolUse | unique_by(.command)) |
-    .hooks.PostToolUse = ((.hooks.PostToolUse // []) + $cq_hooks.PostToolUse | unique_by(.command)) |
-    .hooks.WorktreeCreate = ((.hooks.WorktreeCreate // []) + $cq_hooks.WorktreeCreate | unique_by(.command))
+    .hooks.SessionEnd = ((.hooks.SessionEnd // []) + $cq_hooks.SessionEnd | unique_by(.hooks[0].command)) |
+    .hooks.PreToolUse = ((.hooks.PreToolUse // []) + $cq_hooks.PreToolUse | unique_by(.matcher + (.hooks[0].command))) |
+    .hooks.PostToolUse = ((.hooks.PostToolUse // []) + $cq_hooks.PostToolUse | unique_by(.matcher + (.hooks[0].command))) |
+    .hooks.WorktreeCreate = ((.hooks.WorktreeCreate // []) + $cq_hooks.WorktreeCreate | unique_by(.hooks[0].command))
   ' <<< "$existing")
 
   echo "$updated" > "$settings_file"
@@ -226,13 +252,13 @@ _hooks_uninstall() {
     return 0
   fi
 
-  # Remove cq-specific hook entries (identified by cq commands in them)
+  # Remove cq-specific hook entries (identified by cq commands in hooks[])
   local updated
   updated=$(jq '
     if .hooks then
       .hooks |= with_entries(
         .value |= map(select(
-          (.command // "" | test("cq |cq$|\\.claudekiq")) | not
+          (.hooks // [] | any((.command // "") | test("cq |cq$|\\.claudekiq"))) | not
         ))
       ) |
       .hooks |= with_entries(select(.value | length > 0))

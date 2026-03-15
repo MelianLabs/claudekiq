@@ -146,7 +146,7 @@ teardown() {
   "$CQ" init >/dev/null
   # Default is strict — the Bash hook should exit 2 for rm -rf .claudekiq
   local hook_cmd
-  hook_cmd=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .command' .claude/settings.json)
+  hook_cmd=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' .claude/settings.json)
   # Simulate the hook with a matching command
   result=$(echo '{"tool_input":{"command":"rm -rf .claudekiq"}}' | bash -c "$hook_cmd" 2>&1) && exit_code=0 || exit_code=$?
   [ "$exit_code" -eq 2 ]
@@ -161,7 +161,7 @@ teardown() {
   # Reinstall hooks
   "$CQ" hooks install >/dev/null
   local hook_cmd
-  hook_cmd=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .command' .claude/settings.json)
+  hook_cmd=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' .claude/settings.json)
   result=$(echo '{"tool_input":{"command":"rm -rf .claudekiq"}}' | bash -c "$hook_cmd" 2>&1) && exit_code=0 || exit_code=$?
   [ "$exit_code" -eq 0 ]
 }
@@ -239,7 +239,7 @@ teardown() {
 {
   "hooks": {
     "SessionEnd": [
-      {"type": "command", "command": "echo custom hook"}
+      {"matcher": "", "hooks": [{"type": "command", "command": "echo custom hook"}]}
     ]
   }
 }
@@ -248,5 +248,5 @@ JSON
   "$CQ" hooks uninstall >/dev/null
   # Custom hook should remain
   jq -e '.hooks.SessionEnd | length == 1' .claude/settings.json
-  jq -e '.hooks.SessionEnd[0].command == "echo custom hook"' .claude/settings.json
+  jq -e '.hooks.SessionEnd[0].hooks[0].command == "echo custom hook"' .claude/settings.json
 }
