@@ -38,6 +38,9 @@ cmd_init() {
       _install_mcp_config "$project_dir"
     fi
 
+    # Auto-scan for agents, skills, and plugins
+    CQ_PROJECT_ROOT="$project_dir" cmd_scan >/dev/null 2>&1 || true
+
     cq_json_out --arg dir "$project_dir" '{status:"exists", directory:$dir}' || \
       cq_info "Already initialized in ${project_dir}"
     return 0
@@ -47,9 +50,8 @@ cmd_init() {
   mkdir -p "${project_dir}/.claudekiq/runs"
   mkdir -p "${project_dir}/.claudekiq/plugins"
 
-  # Create default settings.json and agent mapping
+  # Create default settings.json
   echo '{}' > "${project_dir}/.claudekiq/settings.json"
-  echo '{}' > "${project_dir}/.claudekiq/agent-mapping.json"
 
   # Append to .gitignore
   local gitignore="${project_dir}/.gitignore"
@@ -78,6 +80,9 @@ cmd_init() {
   if $install_mcp; then
     _install_mcp_config "$project_dir"
   fi
+
+  # Auto-scan for agents, skills, and plugins
+  CQ_PROJECT_ROOT="$project_dir" cmd_scan >/dev/null 2>&1 || true
 
   cq_json_out --arg dir "$project_dir" '{status:"initialized", directory:$dir}' || \
     cq_info "Initialized .claudekiq/ in ${project_dir}"
@@ -129,10 +134,20 @@ _install_agents() {
     cp "$agents_src"/*.md "$agents_dir/" 2>/dev/null || true
   fi
 
-  # Create empty agent-mapping.json if it doesn't exist
+  # Migrate legacy agent-mapping.json into settings.json agent_mappings key
   local mapping_file="${project_dir}/.claudekiq/agent-mapping.json"
-  if [[ ! -f "$mapping_file" ]]; then
-    echo '{}' > "$mapping_file"
+  if [[ -f "$mapping_file" ]]; then
+    local settings_file="${project_dir}/.claudekiq/settings.json"
+    local mappings
+    mappings=$(cat "$mapping_file")
+    # Only migrate if mappings is non-empty object
+    if [[ "$(jq 'length' <<< "$mappings" 2>/dev/null)" -gt 0 ]]; then
+      local existing='{}'
+      [[ -f "$settings_file" ]] && existing=$(cat "$settings_file")
+      existing=$(jq --argjson m "$mappings" '.agent_mappings = (.agent_mappings // {} | . * $m)' <<< "$existing")
+      echo "$existing" > "$settings_file"
+    fi
+    rm -f "$mapping_file"
   fi
 }
 

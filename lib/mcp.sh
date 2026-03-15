@@ -252,6 +252,9 @@ _mcp_dispatch_tool() {
       [[ -n "$max_age" ]] && args+=("--max-age=$max_age")
       cmd_cleanup "${args[@]}"
       ;;
+    scan)
+      cmd_scan
+      ;;
     workers)
       local subcommand session_id job_id action data
       subcommand=$(_mcp_arg "subcommand" "$arguments")
@@ -283,7 +286,7 @@ _mcp_handle_tools_call() {
   arguments=$(jq -c '.arguments // {}' <<< "$params")
 
   local output exit_code
-  output=$(_mcp_dispatch_tool "$tool_name" "$arguments" 2>&1) && exit_code=0 || exit_code=$?
+  output=$(_mcp_dispatch_tool "$tool_name" "$arguments" 2>/dev/null) && exit_code=0 || exit_code=$?
 
   if [[ $exit_code -eq 0 ]]; then
     _mcp_respond "$id" "$(jq -cn --arg text "$output" \

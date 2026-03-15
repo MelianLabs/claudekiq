@@ -67,6 +67,11 @@ cq_ctx_set() {
   local run_id="$1" key="$2" value="$3"
   local run_dir
   run_dir=$(cq_run_dir "$run_id")
+  cq_with_lock "$run_dir" _cq_ctx_set_locked "$run_dir" "$key" "$value"
+}
+
+_cq_ctx_set_locked() {
+  local run_dir="$1" key="$2" value="$3"
   local ctx
   ctx=$(cq_read_json "${run_dir}/ctx.json")
   ctx=$(jq --arg k "$key" --arg v "$value" '.[$k] = $v' <<< "$ctx")

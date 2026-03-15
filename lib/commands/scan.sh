@@ -158,7 +158,7 @@ _merge_scan_results() {
     --argjson skills "$skills" \
     --argjson plugins "$plugins" \
     --arg ts "$ts" \
-    '.agents = $agents | .skills = $skills | .plugins = $plugins | .scanned_at = $ts' \
+    '. + {agents: $agents, skills: $skills, plugins: $plugins, scanned_at: $ts}' \
     <<< "$existing")
 
   echo "$updated" > "$settings_file"

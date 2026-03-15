@@ -68,20 +68,42 @@ cq_log_event() {
 
 # --- Interpolation ---
 
-# Replace {{var}} references with values from a JSON context object
+# Replace {{expr}} references with values from a JSON context object.
+# Supports nested access ({{config.timeout}}), array indexing ({{items[0].name}}),
+# and jq expressions ({{results | length}}). Backward compatible with flat keys.
 # Usage: cq_interpolate "template string" '{"key":"value"}'
 cq_interpolate() {
   local template="$1"
   local ctx_json="$2"
   local result="$template"
-  local var val
 
-  # Extract all {{var}} references
-  while [[ "$result" =~ \{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\} ]]; do
-    var="${BASH_REMATCH[1]}"
-    val=$(jq -r --arg k "$var" '.[$k] // ""' <<< "$ctx_json")
-    # Replace all occurrences of this specific variable
-    result="${result//\{\{${var}\}\}/${val}}"
+  # Extract all {{expr}} patterns using grep (handles special chars better than bash regex)
+  local -a exprs=()
+  local expr
+  while IFS= read -r expr; do
+    [[ -z "$expr" ]] && continue
+    # Deduplicate
+    local found=false e
+    for e in "${exprs[@]+"${exprs[@]}"}"; do
+      [[ "$e" == "$expr" ]] && { found=true; break; }
+    done
+    $found || exprs+=("$expr")
+  done < <(printf '%s' "$template" | grep -o '{{[^}]*}}' | sed 's/^{{//;s/}}$//')
+
+  [[ ${#exprs[@]} -eq 0 ]] && { echo "$template"; return; }
+
+  # Resolve each expression individually via jq
+  for expr in "${exprs[@]}"; do
+    local val
+    val=$(jq -r "try (.${expr} // empty | tostring) catch empty" <<< "$ctx_json" 2>/dev/null) || val=""
+    # Use awk index() for literal string matching (no regex interpretation)
+    local pattern="{{${expr}}}"
+    result=$(awk -v pat="$pattern" -v rep="$val" '
+      { while ((i = index($0, pat)) > 0) {
+          $0 = substr($0, 1, i-1) rep substr($0, i + length(pat))
+        }
+        print
+      }' <<< "$result")
   done
   echo "$result"
 }
@@ -478,16 +500,16 @@ cq_resolve_step_type() {
 
 # --- Agent target mapping ---
 
-# Resolve an agent target name through the optional mapping file.
+# Resolve an agent target name through agent_mappings in settings.json.
 # Usage: mapped=$(cq_resolve_agent_target "code-review")
 # Returns the mapped name if found, or the original name if no mapping exists.
 cq_resolve_agent_target() {
   local name="$1"
-  local mapping_file="${CQ_PROJECT_ROOT}/.claudekiq/agent-mapping.json"
+  local settings_file="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
 
-  if [[ -f "$mapping_file" ]]; then
+  if [[ -f "$settings_file" ]]; then
     local mapped
-    mapped=$(jq -r --arg n "$name" '.[$n] // empty' "$mapping_file" 2>/dev/null)
+    mapped=$(jq -r --arg n "$name" '.agent_mappings[$n] // empty' "$settings_file" 2>/dev/null)
     if [[ -n "$mapped" ]]; then
       echo "$mapped"
       return
