@@ -1,6 +1,10 @@
 ---
 name: cq-workers
 description: "Parallel workflow orchestration — spawn multiple Claude workers to process jobs concurrently. Use /cq-workers <workflow> --jobs='[...]' to start."
+argument-hint: "<workflow> --jobs='[...]' [--headless]"
+allowed-tools: Bash, Read, Agent, Skill, TaskCreate, TaskUpdate, CronCreate, CronDelete
+context: fork
+agent: general-purpose
 ---
 
 # Claudekiq Workers — Parallel Orchestration
@@ -32,6 +36,8 @@ Agent tool call:
   run_in_background: true
   prompt: <child agent prompt below>
 ```
+
+   **Save the `agentId`** returned by each Agent call — store it alongside the `job_id` in a local map. You'll use these IDs to resume agents for detailed results after completion.
 
 5. For EACH job, also create a Task in the parent session for dashboard tracking:
    - Use `TaskCreate` with name: `"Worker: <job_id> — <description>"` and description: `"Processing <job_id>"`
@@ -68,10 +74,12 @@ Execute each step of the cq workflow:
    - manual: mark as pass (headless) or write gate info (interactive)
 4. Mark done: cq step-done <run_id> <step_id> pass|fail
 5. Write heartbeat: cq heartbeat <run_id>
-6. For long-running steps (agent, skill), start a background heartbeat loop BEFORE execution:
-   ( while true; do cq heartbeat <run_id> 2>/dev/null; sleep 30; done ) & CQ_HB_PID=$!
+6. For long-running steps (agent, skill), use CronCreate for heartbeats BEFORE execution:
+   - Create cron: CronCreate(schedule: "*/1 * * * *", command: "cq heartbeat <run_id>")
+   - Save the returned cron_id
    ... execute step ...
-   kill $CQ_HB_PID 2>/dev/null; wait $CQ_HB_PID 2>/dev/null
+   - After step completes: CronDelete(id: <cron_id>)
+   This replaces the old background bash loop. Cron jobs are session-scoped and auto-clean on exit, preventing leaked heartbeat processes.
 7. Update status file after each step:
    Write to: $PARENT_ROOT/.claudekiq/workers/$SESSION_ID/$JOB_ID.status.json
    Content: {"status":"running","run_id":"<run_id>","step":"<step_id>","step_name":"<name>","total_steps":<N>,"completed_steps":<N>}
@@ -108,12 +116,17 @@ When workflow finishes (completed or failed):
 
 ## Monitoring Loop
 
-After spawning all workers, loop until all jobs reach a terminal state:
+After spawning all workers, loop until all jobs reach a terminal state. **Prefer event-driven monitoring**: when a background agent completion notification arrives, immediately process it. Use 30-second polling as a fallback only if no notifications arrive.
 
 ### Step 1: Read Status
+
+When a background agent completion notification arrives, OR on 30-second fallback:
+
 ```bash
 cq workers status <session_id> --json
 ```
+
+If a specific agent completed, use `Agent(resume: <agentId>)` to retrieve its detailed results and extract any output data needed for the dashboard.
 
 ### Step 1.5: Update Tasks
 For each worker, update the corresponding Task created during startup:
@@ -165,7 +178,7 @@ If any are detected:
 
 ### Step 5: Check Completion
 - If ALL workers are completed/failed: show final summary and stop
-- Otherwise: wait 10 seconds and go back to Step 1
+- Otherwise: wait for the next background agent completion notification. If no notification arrives within 30 seconds, poll as a fallback and go back to Step 1.
 
 ## Final Summary
 When all workers finish, show:
@@ -186,5 +199,6 @@ Results:
 - Always use `--json` flag when reading cq state
 - Each worker runs in its own git worktree — no conflicts between workers
 - The shared coordination directory is at $CQ_PROJECT_ROOT/.claudekiq/workers/<session_id>/
-- Workers communicate ONLY through status/answer files — no direct messaging
-- If a worker agent finishes (background notification), re-read status to update dashboard
+- Workers write status/answer files for coordination; the foreman also receives background agent completion notifications
+- When a worker agent completes, use `Agent(resume: <agentId>)` to retrieve detailed results before updating the dashboard
+- Save all `agentId` values from spawned workers — they are needed for resume and result retrieval

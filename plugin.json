@@ -1,0 +1,14 @@
+{
+  "name": "claudekiq",
+  "version": "2.3.0",
+  "description": "Filesystem-backed workflow engine for Claude Code — orchestrates multi-step development workflows with AI agents, shell commands, and human approval gates.",
+  "author": "MelianLabs",
+  "homepage": "https://github.com/MelianLabs/claudekiq",
+  "skills": [
+    "skills/cq",
+    "skills/cq-workers"
+  ],
+  "agents": [
+    "agents/cq-dev"
+  ]
+}

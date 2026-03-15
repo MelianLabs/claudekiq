@@ -24,6 +24,7 @@ steps:
     type: agent
     target: "@cq-dev"
     args_template: "Implement: {{description}}. Follow patterns in existing lib/*.sh files. Update lib/schema.sh if adding a command."
+    background: true
     gate: human
 
   - id: run-tests

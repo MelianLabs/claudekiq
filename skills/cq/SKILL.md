@@ -1,11 +1,21 @@
 ---
 name: cq
 description: "Claudekiq workflow runner — orchestrates multi-step development workflows. Use /cq to list and run workflows, /cq <workflow> to start a specific one, or /cq status to monitor all jobs."
+argument-hint: "[workflow] [--key=val...]"
+allowed-tools: Bash, Read, Agent, Skill, TaskCreate, TaskUpdate, CronCreate, CronDelete
 ---
 
 # Claudekiq Workflow Runner
 
 You are the runner for `cq` (claudekiq), a filesystem-backed workflow engine. Your job is to execute workflow steps, handle gates, and drive workflows to completion.
+
+## Current State
+
+Available workflows:
+`!cq workflows list --json 2>/dev/null || echo "[]"`
+
+Active runs:
+`!cq list --json 2>/dev/null || echo "[]"`
 
 ## Invocation
 
@@ -73,9 +83,9 @@ This mode shows a live dashboard of all running, pending, and gated jobs with au
 
 ### Auto-refresh
 
-When the user wants auto-refresh, invoke the `/loop` skill with a 10-second interval:
-- Skill: `loop`, Args: `10s /cq status`
-- This will re-run `/cq status` every 10 seconds until the user stops it
+When the user wants auto-refresh, invoke the `/loop` skill:
+- Skill: `loop`, Args: `1m /cq status`
+- This will re-run `/cq status` every minute until the user stops it (1m is the minimum interval supported by `/loop`)
 - The user can stop it at any time by pressing the interrupt key
 
 ## Start Workflow
@@ -86,7 +96,10 @@ When the user wants auto-refresh, invoke the `/loop` skill with a 10-second inte
 4. For each default that has an **empty string value** and was NOT provided via arguments, ask the user for a value. Skip defaults that already have non-empty values (those are true defaults, not required params).
 5. Run: `cq start <name> --key=val...` with all collected parameters. Use `--json` to capture the run_id.
 6. Extract `run_id` from the JSON response
-7. Enter the **Runner Loop**
+7. **Create a workflow-level Task** for persistent progress tracking:
+   - Use `TaskCreate` with name: `"cq: <workflow> — <description>"` and description: `"Running workflow <workflow> (run: <run_id>)"`
+   - Save the returned `task_id` — you'll update it after each step in the Runner Loop
+8. Enter the **Runner Loop**
 
 ## Runner Loop
 
@@ -161,11 +174,11 @@ Use the **Agent tool** to spawn a specialized agent:
 1. **Determine subagent_type** from `target`:
    - If `target` is empty or doesn't start with `@`, execute inline as before (backward compat): do the work described in args_template yourself
    - Strip the `@` prefix (e.g., `@code-review` → `code-review`)
-   - Look up the target in the mapping table below. If no match, use `general-purpose`
+   - Use the stripped name directly as `subagent_type` — Claude Code resolves it against `.claude/agents/<name>.md` definitions. If no matching agent exists, it falls back to `general-purpose`.
 
 2. **Invoke the Agent tool:**
    - `description`: step name (max 5 words)
-   - `subagent_type`: resolved from target (or `general-purpose`)
+   - `subagent_type`: the stripped `@target` name (e.g., `cq-dev`, `code-review`, `rails-test`)
    - `model`: from the step's `model` field (if present)
    - `prompt`: the interpolated `args_template`
    - `run_in_background`: `true` if the step has `background: true` (see Background Execution below)
@@ -174,37 +187,7 @@ Use the **Agent tool** to spawn a specialized agent:
    - Agent returns successfully → outcome is `pass`
    - Agent returns with error or cannot complete → outcome is `fail`
    - Extract result JSON from the agent's response for `outputs` processing
-
-##### Target → subagent_type mapping
-
-| Target | subagent_type |
-|--------|--------------|
-| `@rails-test` | `rails-test` |
-| `@rails-lint` | `rails-lint` |
-| `@webpack-test` | `webpack-test` |
-| `@webpack-lint` | `webpack-lint` |
-| `@code-review` | `code-reviewer` |
-| `@security-reviewer` | `security-reviewer` |
-| `@performance-reviewer` | `performance-reviewer` |
-| `@design-patterns-reviewer` | `design-patterns-reviewer` |
-| `@lt-story` | `lt-story` |
-| `@lt-branch` | `lt-branch` |
-| `@sentry-investigator` | `sentry-investigator` |
-| `@helpcenter` | `helpcenter` |
-| `@scheduler-v2-test` | `scheduler-v2-test` |
-| `@scheduler-v2-feature` | `scheduler-v2-feature` |
-| `@pos-v2-test` | `pos-v2-test` |
-| `@pos-v2-feature` | `pos-v2-feature` |
-| `@pos-v2-lint` | `pos-v2-lint` |
-| `@marketplace-test` | `marketplace-test` |
-| `@marketplace-lint` | `marketplace-lint` |
-| `@marketplace-feature` | `marketplace-feature` |
-| `@chat-widget-test` | `chat-widget-test` |
-| `@chat-widget-lint` | `chat-widget-lint` |
-| `@chat-widget-feature` | `chat-widget-feature` |
-| `@rails-feature` | `rails-feature` |
-| `@webpack-feature` | `webpack-feature` |
-| (anything else with `@`) | `general-purpose` |
+   - **Save the `agentId`** from the response — it can be used later to resume the agent if needed
 
 ##### Background execution
 
@@ -313,9 +296,13 @@ cq step-done <run_id> <step_id> pass|fail [result_json]
 If the step produced JSON output (e.g. from a bash command), pass it as `result_json` so outputs can be extracted into context.
 
 After marking the step complete:
-1. **Update the Task** created in Step 5.5 using `TaskUpdate`:
+1. **Update the per-step Task** created in Step 5.5 using `TaskUpdate`:
    - Set status to `completed` (if pass) or `failed` (if fail)
    - Include a brief result summary
+2. **Update the workflow-level Task** (created during Start Workflow) using `TaskUpdate`:
+   - Set `activeForm` to `"Step <completed>/<total>: <next_step_name>"` so progress is visible in Claude Code's status bar
+   - If the workflow is now `completed`: set status to `completed`
+   - If the workflow is now `failed`: set status to `failed`
 
 ### Step 8: Handle Post-Step State
 Re-read status: `cq status <run_id> --json`

@@ -20,9 +20,12 @@ cmd_init() {
   done
 
   if [[ -d "${project_dir}/.claudekiq" ]]; then
-    # Already initialized — still update skills and gitignore in case of upgrades
+    # Already initialized — still update skills, hooks, and gitignore in case of upgrades
     _install_skill "$project_dir"
     _install_workers_skill "$project_dir"
+    _install_agents "$project_dir"
+    _install_hooks "$project_dir"
+    _install_settings "$project_dir"
 
     # Ensure .gitignore has workers entry (added in v2.0.0)
     local gitignore="${project_dir}/.gitignore"
@@ -63,9 +66,12 @@ cmd_init() {
     $needs_workers && echo '.claudekiq/workers/'
   } >> "$gitignore"
 
-  # Install Claude Code skills (/cq and /cq-workers)
+  # Install Claude Code skills, agents, hooks, and settings
   _install_skill "$project_dir"
   _install_workers_skill "$project_dir"
+  _install_agents "$project_dir"
+  _install_hooks "$project_dir"
+  _install_settings "$project_dir"
 
   # Install MCP config only if explicitly requested
   if $install_mcp; then
@@ -108,6 +114,48 @@ _install_workers_skill() {
   fi
 
   cq_die "Cannot find skills/cq-workers/SKILL.md — please reinstall cq"
+}
+
+_install_agents() {
+  local project_dir="$1"
+  local agents_dir="${project_dir}/.claude/agents"
+  mkdir -p "$agents_dir"
+
+  # Install cq-dev agent definition
+  local src="${CQ_SCRIPT_DIR}/.claude/agents/cq-dev.md"
+  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../.claude/agents/cq-dev.md"
+  if [[ -f "$src" ]]; then
+    cp "$src" "${agents_dir}/cq-dev.md"
+  fi
+}
+
+_install_hooks() {
+  local project_dir="$1"
+  local hooks_dir="${project_dir}/.claude/hooks"
+  mkdir -p "$hooks_dir"
+
+  # Install PostToolUse hook
+  local src="${CQ_SCRIPT_DIR}/.claude/hooks/PostToolUse.sh"
+  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../.claude/hooks/PostToolUse.sh"
+  if [[ -f "$src" ]]; then
+    cp "$src" "${hooks_dir}/PostToolUse.sh"
+    chmod +x "${hooks_dir}/PostToolUse.sh"
+  fi
+}
+
+_install_settings() {
+  local project_dir="$1"
+  local settings_file="${project_dir}/.claude/settings.json"
+
+  # Install project-scoped Claude Code settings (hooks config)
+  # Only install if no settings.json exists yet — don't overwrite user customizations
+  if [[ ! -f "$settings_file" ]]; then
+    local src="${CQ_SCRIPT_DIR}/.claude/settings.json"
+    [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../.claude/settings.json"
+    if [[ -f "$src" ]]; then
+      cp "$src" "$settings_file"
+    fi
+  fi
 }
 
 _install_mcp_config() {

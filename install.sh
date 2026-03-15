@@ -31,6 +31,19 @@ if [[ -n "$SCRIPT_DIR" && -d "${SCRIPT_DIR}/lib" ]]; then
     mkdir -p "${CQ_HOME}/skills"
     cp -r "${SCRIPT_DIR}"/skills/* "${CQ_HOME}/skills/"
   fi
+  if [[ -d "${SCRIPT_DIR}/.claude/agents" ]]; then
+    mkdir -p "${CQ_HOME}/.claude/agents"
+    cp "${SCRIPT_DIR}"/.claude/agents/*.md "${CQ_HOME}/.claude/agents/" 2>/dev/null || true
+  fi
+  if [[ -d "${SCRIPT_DIR}/.claude/hooks" ]]; then
+    mkdir -p "${CQ_HOME}/.claude/hooks"
+    cp "${SCRIPT_DIR}"/.claude/hooks/*.sh "${CQ_HOME}/.claude/hooks/" 2>/dev/null || true
+    chmod +x "${CQ_HOME}"/.claude/hooks/*.sh 2>/dev/null || true
+  fi
+  if [[ -f "${SCRIPT_DIR}/.claude/settings.json" ]]; then
+    mkdir -p "${CQ_HOME}/.claude"
+    cp "${SCRIPT_DIR}/.claude/settings.json" "${CQ_HOME}/.claude/settings.json"
+  fi
 else
   # Remote install (curl pipe or no local files)
   echo "Downloading from ${REPO_URL}..."
@@ -46,6 +59,13 @@ else
   curl -fsSL "${REPO_URL}/skills/cq/SKILL.md" -o "${CQ_HOME}/skills/cq/SKILL.md"
   mkdir -p "${CQ_HOME}/skills/cq-workers"
   curl -fsSL "${REPO_URL}/skills/cq-workers/SKILL.md" -o "${CQ_HOME}/skills/cq-workers/SKILL.md"
+  mkdir -p "${CQ_HOME}/.claude/agents"
+  curl -fsSL "${REPO_URL}/.claude/agents/cq-dev.md" -o "${CQ_HOME}/.claude/agents/cq-dev.md"
+  mkdir -p "${CQ_HOME}/.claude/hooks"
+  curl -fsSL "${REPO_URL}/.claude/hooks/PostToolUse.sh" -o "${CQ_HOME}/.claude/hooks/PostToolUse.sh"
+  chmod +x "${CQ_HOME}/.claude/hooks/PostToolUse.sh"
+  mkdir -p "${CQ_HOME}/.claude"
+  curl -fsSL "${REPO_URL}/.claude/settings.json" -o "${CQ_HOME}/.claude/settings.json"
 fi
 
 chmod +x "${CQ_HOME}/bin/cq"

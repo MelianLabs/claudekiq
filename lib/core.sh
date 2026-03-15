@@ -373,31 +373,37 @@ cq_fire_hook() {
   local config hook_cmd
   config=$(cq_resolve_config)
   hook_cmd=$(jq -r --arg h "$hook_name" '.notifications[$h] // empty' <<< "$config")
-  [[ -z "$hook_cmd" ]] && return 0
 
-  local ctx_json
-  if [[ -f "${run_dir}/ctx.json" ]]; then
-    ctx_json=$(cat "${run_dir}/ctx.json")
-  else
-    ctx_json='{}'
-  fi
-
-  # Add run_id and step_id to context for interpolation
   local run_id
   run_id=$(basename "$run_dir")
-  ctx_json=$(jq --arg rid "$run_id" '. + {run_id: $rid}' <<< "$ctx_json")
 
+  local current_step=""
   if [[ -f "${run_dir}/meta.json" ]]; then
-    local current_step
     current_step=$(jq -r '.current_step // ""' "${run_dir}/meta.json")
-    ctx_json=$(jq --arg sid "$current_step" '. + {step_id: $sid}' <<< "$ctx_json")
   fi
 
-  local interpolated
-  interpolated=$(cq_interpolate "$hook_cmd" "$ctx_json")
+  local template=""
+  if [[ -f "${run_dir}/meta.json" ]]; then
+    template=$(jq -r '.template // ""' "${run_dir}/meta.json")
+  fi
 
-  # Run in background, ignore failures
-  (eval "$interpolated" &>/dev/null &)
+  # Emit structured JSON event to stderr for Claude Code hooks to parse
+  jq -cn --arg hook "$hook_name" --arg run_id "$run_id" \
+    --arg step "$current_step" --arg template "$template" \
+    '{event: "cq_hook", hook: $hook, run_id: $run_id, step: $step, template: $template}' >&2
+
+  # If a notification command is configured, pass context via environment variables
+  # instead of interpolating into the command string (prevents shell injection)
+  if [[ -n "$hook_cmd" ]]; then
+    (
+      export CQ_HOOK="$hook_name"
+      export CQ_RUN_ID="$run_id"
+      export CQ_STEP_ID="$current_step"
+      export CQ_TEMPLATE="$template"
+      export CQ_RUN_DIR="$run_dir"
+      bash -c "$hook_cmd" &>/dev/null
+    ) &
+  fi
 }
 
 # --- Platform detection ---
