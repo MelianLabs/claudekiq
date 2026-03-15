@@ -232,7 +232,7 @@ cq_default_config() {
   },
   "step_fields": ["name", "type", "target", "prompt", "context", "args_template", "gate", "model", "background", "resume", "outputs"],
   "models": ["opus", "sonnet", "haiku"],
-  "default_model": "sonnet",
+  "default_model": "opus",
   "edge_keys": ["next", "on_pass", "on_fail"],
   "notifications": {
     "on_gate": null,
