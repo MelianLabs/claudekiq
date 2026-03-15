@@ -1,32 +1,29 @@
 #!/usr/bin/env bash
-# scan.sh — Scan project for agents, skills, and plugins
+# scan.sh — Scan project for agents, skills, and stack info
 
 cmd_scan() {
   [[ -d "${CQ_PROJECT_ROOT}/.claudekiq" ]] || cq_die "Not a cq project. Run 'cq init' first."
 
-  local agents skills plugins stack
+  local agents skills stack
   agents=$(_scan_agents)
   skills=$(_scan_skills)
-  plugins=$(_scan_plugins)
   stack=$(_scan_stack)
 
-  _merge_scan_results "$agents" "$skills" "$plugins" "$stack"
+  _merge_scan_results "$agents" "$skills" "$stack"
 
   local ts
   ts=$(cq_now)
-  local agent_count skill_count plugin_count
+  local agent_count skill_count
   agent_count=$(jq 'length' <<< "$agents")
   skill_count=$(jq 'length' <<< "$skills")
-  plugin_count=$(jq 'length' <<< "$plugins")
 
   cq_json_out \
     --argjson agents "$agents" \
     --argjson skills "$skills" \
-    --argjson plugins "$plugins" \
     --argjson stack "$stack" \
     --arg scanned_at "$ts" \
-    '{agents:$agents, skills:$skills, plugins:$plugins, stack:$stack, scanned_at:$scanned_at}' || \
-    cq_info "Scanned: ${agent_count} agent(s), ${skill_count} skill(s), ${plugin_count} plugin(s)"
+    '{agents:$agents, skills:$skills, stack:$stack, scanned_at:$scanned_at}' || \
+    cq_info "Scanned: ${agent_count} agent(s), ${skill_count} skill(s)"
 }
 
 _scan_agents() {
@@ -90,33 +87,6 @@ _scan_skills() {
           tools: (if $fm["allowed-tools"] then ($fm["allowed-tools"] | split(",") | map(gsub("^\\s+|\\s+$"; ""))) else null end)
         } | with_entries(select(.value != null))') || continue
       items+=("$item")
-    done
-  fi
-
-  if [[ ${#items[@]} -gt 0 ]]; then
-    printf '%s\n' "${items[@]}" | jq -s '.'
-  else
-    echo '[]'
-  fi
-}
-
-_scan_plugins() {
-  local plugins_dir="${CQ_PROJECT_ROOT}/.claudekiq/plugins"
-  local -a items=()
-
-  if [[ -d "$plugins_dir" ]]; then
-    local file
-    for file in "$plugins_dir"/*.sh; do
-      [[ -f "$file" ]] || continue
-      local plugin_name
-      plugin_name=$(basename "$file" .sh)
-      local is_exec="false"
-      [[ -x "$file" ]] && is_exec="true"
-      items+=("$(jq -cn \
-        --arg name "$plugin_name" \
-        --arg path ".claudekiq/plugins/${plugin_name}.sh" \
-        --argjson executable "$is_exec" \
-        '{name:$name, type:"bash", path:$path, executable:$executable}')")
     done
   fi
 
@@ -299,7 +269,7 @@ _extract_frontmatter() {
 }
 
 _merge_scan_results() {
-  local agents="$1" skills="$2" plugins="$3" stack="${4:-"{}"}"
+  local agents="$1" skills="$2" stack="${3:-"{}"}"
   local settings_file="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
   local ts
   ts=$(cq_now)
@@ -313,10 +283,9 @@ _merge_scan_results() {
   updated=$(jq \
     --argjson agents "$agents" \
     --argjson skills "$skills" \
-    --argjson plugins "$plugins" \
     --argjson stack "$stack" \
     --arg ts "$ts" \
-    '. + {agents: $agents, skills: $skills, plugins: $plugins, stack: $stack, scanned_at: $ts}' \
+    '. + {agents: $agents, skills: $skills, stack: $stack, scanned_at: $ts} | del(.plugins)' \
     <<< "$existing")
 
   echo "$updated" > "$settings_file"

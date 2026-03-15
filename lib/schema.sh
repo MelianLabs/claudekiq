@@ -3,7 +3,7 @@
 
 # Single source of truth for MCP-exposed commands (used by mcp.sh too)
 cq_command_list() {
-  echo "start status list log pause resume cancel retry step-done skip todos todo ctx add-step add-steps set-next workflows heartbeat check-stale cleanup workers scan for-each parallel batch"
+  echo "start status list log pause resume cancel retry step-done skip todos todo ctx add-step add-steps set-next workflows heartbeat check-stale cleanup workers scan hooks for-each parallel batch"
 }
 
 cmd_schema() {
@@ -13,7 +13,7 @@ cmd_schema() {
     # List all commands (MCP + meta commands)
     local mcp_cmds
     mcp_cmds=$(cq_command_list)
-    local all_cmds="$mcp_cmds config init version help schema mcp"
+    local all_cmds="$mcp_cmds config init hooks version help schema mcp"
     # Output as JSON array
     echo "$all_cmds" | tr ' ' '\n' | jq -Rcs 'split("\n") | map(select(. != ""))'
     return
@@ -437,13 +437,33 @@ JSON
       cat <<'JSON'
 {
   "command": "scan",
-  "description": "Scan project for available agents, skills, plugins, and stack info. Writes results to .claudekiq/settings.json",
+  "description": "Scan project for available agents, skills, and stack info. Writes results to .claudekiq/settings.json",
   "usage": "cq scan",
   "positional": [],
   "parameters": [],
-  "output": {"agents": "array", "skills": "array", "plugins": "array", "stack": "object", "scanned_at": "string"},
+  "output": {"agents": "array", "skills": "array", "stack": "object", "scanned_at": "string"},
   "flags": ["--json"],
   "examples": ["cq scan", "cq scan --json"]
+}
+JSON
+      ;;
+    hooks)
+      cat <<'JSON'
+{
+  "command": "hooks",
+  "description": "Manage cq hooks in .claude/settings.json",
+  "usage": "cq hooks <install|uninstall>",
+  "positional": ["subcommand"],
+  "subcommand_param": "subcommand",
+  "subcommands": [
+    {"name": "install", "description": "Merge cq hooks into .claude/settings.json"},
+    {"name": "uninstall", "description": "Remove cq hooks from .claude/settings.json"}
+  ],
+  "parameters": [
+    {"name": "subcommand", "type": "string", "required": true, "description": "install or uninstall"}
+  ],
+  "flags": ["--json"],
+  "examples": ["cq hooks install", "cq hooks uninstall"]
 }
 JSON
       ;;

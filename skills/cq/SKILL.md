@@ -17,8 +17,8 @@ Available workflows:
 Active runs:
 `!cq list --json 2>/dev/null || echo "[]"`
 
-Project inventory (agents, skills, plugins):
-`!jq '{agents: (.agents // []) | map(.name), skills: (.skills // []) | map(.name), plugins: (.plugins // []) | map(.name)}' .claudekiq/settings.json 2>/dev/null || echo "{}"`
+Project inventory (agents, skills):
+`!jq '{agents: (.agents // []) | map(.name), skills: (.skills // []) | map(.name)}' .claudekiq/settings.json 2>/dev/null || echo "{}"`
 
 ## Invocation
 
@@ -62,20 +62,32 @@ Extract: `meta.status`, `meta.current_step`, `steps`, `state`, `ctx`
 
 ### 3. Handle Gates
 If `meta.status` is `gated`:
-- Run `cq todos --json`
-- Use `AskUserQuestion` for simple gates: "Step '<name>' needs approval."
+
+**Simple gate** (single approval, interactive session):
+- Use `AskUserQuestion` inline: "Step '<name>' needs approval. Approve or reject?"
+- Based on response: `cq todo <number> approve|reject`
+
+**Complex gate** (multi-field, review escalation at max_visits):
+- Run `cq todos --json` to list pending actions
+- Present the TODO details to the user
+- Use `AskUserQuestion` for each decision
 - Apply: `cq todo <number> <action>`
-- Return to step 1
+
+**Headless mode** (`--headless`):
+- Auto-approve all gates (existing behavior)
+
+Return to step 1.
 
 ### 4. Dispatch Step
 
 Find current step definition. Based on `type`:
 
 #### `bash`
-Run interpolated `target` via Bash tool. Exit 0 = pass, non-zero = fail.
+Run **interpolated** target via Bash tool. Exit 0 = pass, non-zero = fail.
+Use `cq_interpolate` for `{{variable}}` substitution in the target command.
 
 #### `agent`
-Invoke `/cq-agent` sub-skill:
+Invoke `/cq-agent` sub-skill with **raw** prompt + context (no interpolation):
 ```
 Skill: "cq-agent"
 Args: "<run_id> <step_id>"
@@ -100,12 +112,11 @@ For **agent/skill** sub-steps: invoke `/cq-agent` for each, or spawn parallel ag
 
 For `batch`: create worker session with `cq batch <run_id> <step_id> --json`, then invoke `/cq-workers`.
 
-#### Custom type (plugin)
-Check resolution order:
+#### Custom type (agent-backed)
+Check resolution:
 1. `.claude/agents/<type>.md` exists → treat as agent step, invoke `/cq-agent`
-2. `.claudekiq/plugins/<type>.sh` exists → run via Bash with step JSON on stdin
-3. Scan results fallback → check `agents` or `plugins` arrays in settings.json
-4. Not found → fail with "Unknown step type"
+2. Check `agents` array in settings.json → treat as agent step
+3. Not found → fail with "Unknown step type"
 
 ### 5. Handle Timeouts
 If step has `timeout:`:
@@ -129,6 +140,14 @@ Re-read status. The `cq step-done` command handles gate logic internally:
 - **review (fail)** → under max_visits routes via `on_fail`; at max_visits creates TODO
 
 Return to step 1.
+
+## Task Mirroring
+
+Use Tasks as a session-scoped UI mirror of filesystem state:
+- On workflow start: `TaskCreate` with workflow name and description
+- On each step start: `TaskCreate` with step name
+- On step done: `TaskUpdate` to completed
+- On session restart: rebuild Tasks from `cq status --json`
 
 ## Display Guidelines
 

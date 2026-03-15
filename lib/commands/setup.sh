@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup.sh — Init, version, help, and skill installation commands
+# setup.sh — Init, version, help, hooks, and plugin.json installation commands
 
 cmd_init() {
   local project_dir="$PWD"
@@ -20,14 +20,8 @@ cmd_init() {
   done
 
   if [[ -d "${project_dir}/.claudekiq" ]]; then
-    # Already initialized — still update skills, hooks, and gitignore in case of upgrades
-    _install_skill "$project_dir"
-    _install_agent_skill "$project_dir"
-    _install_workers_skill "$project_dir"
-    _install_init_skill "$project_dir"
-    _install_agents "$project_dir"
-    _install_hooks "$project_dir"
-    _install_settings "$project_dir"
+    # Already initialized — update plugin.json and gitignore in case of upgrades
+    _install_plugin_json "$project_dir"
 
     # Ensure .gitignore has workers entry
     local gitignore="${project_dir}/.gitignore"
@@ -40,7 +34,7 @@ cmd_init() {
       _install_mcp_config "$project_dir"
     fi
 
-    # Auto-scan for agents, skills, and plugins
+    # Auto-scan for agents and skills
     CQ_PROJECT_ROOT="$project_dir" cmd_scan >/dev/null 2>&1 || true
 
     cq_json_out --arg dir "$project_dir" '{status:"exists", directory:$dir}' || \
@@ -50,7 +44,6 @@ cmd_init() {
 
   mkdir -p "${project_dir}/.claudekiq/workflows/private"
   mkdir -p "${project_dir}/.claudekiq/runs"
-  mkdir -p "${project_dir}/.claudekiq/plugins"
 
   # Create default settings.json
   echo '{}' > "${project_dir}/.claudekiq/settings.json"
@@ -71,21 +64,15 @@ cmd_init() {
     $needs_workers && echo '.claudekiq/workers/'
   } >> "$gitignore"
 
-  # Install Claude Code skills, agents, hooks, and settings
-  _install_skill "$project_dir"
-  _install_agent_skill "$project_dir"
-  _install_workers_skill "$project_dir"
-  _install_init_skill "$project_dir"
-  _install_agents "$project_dir"
-  _install_hooks "$project_dir"
-  _install_settings "$project_dir"
+  # Install .claude-plugin/plugin.json (points to ~/.cq/skills/)
+  _install_plugin_json "$project_dir"
 
   # Install MCP config only if explicitly requested
   if $install_mcp; then
     _install_mcp_config "$project_dir"
   fi
 
-  # Auto-scan for agents, skills, and plugins
+  # Auto-scan for agents and skills
   CQ_PROJECT_ROOT="$project_dir" cmd_scan >/dev/null 2>&1 || true
 
   cq_json_out --arg dir "$project_dir" '{status:"initialized", directory:$dir}' || {
@@ -94,126 +81,16 @@ cmd_init() {
   }
 }
 
-_install_skill() {
+_install_plugin_json() {
   local project_dir="$1"
-  local skill_dir="${project_dir}/.claude/skills/cq"
-  mkdir -p "$skill_dir"
-
-  # Try to copy from the cq installation directory first
-  local src="${CQ_SCRIPT_DIR}/skills/cq/SKILL.md"
-  # When installed to ~/.cq/bin/, skills are at ~/.cq/skills/
-  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq/SKILL.md"
-  if [[ -f "$src" ]]; then
-    cp "$src" "${skill_dir}/SKILL.md"
-    return
-  fi
-
-  cq_die "Cannot find skills/cq/SKILL.md — please reinstall cq"
-}
-
-_install_agent_skill() {
-  local project_dir="$1"
-  local skill_dir="${project_dir}/.claude/skills/cq-agent"
-  mkdir -p "$skill_dir"
-
-  local src="${CQ_SCRIPT_DIR}/skills/cq-agent/SKILL.md"
-  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq-agent/SKILL.md"
-  if [[ -f "$src" ]]; then
-    cp "$src" "${skill_dir}/SKILL.md"
-    return
-  fi
-
-  # cq-agent is optional — don't die if not found during partial installs
-}
-
-_install_workers_skill() {
-  local project_dir="$1"
-  local skill_dir="${project_dir}/.claude/skills/cq-workers"
-  mkdir -p "$skill_dir"
-
-  # Try to copy from the cq installation directory first
-  local src="${CQ_SCRIPT_DIR}/skills/cq-workers/SKILL.md"
-  # When installed to ~/.cq/bin/, skills are at ~/.cq/skills/
-  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq-workers/SKILL.md"
-  if [[ -f "$src" ]]; then
-    cp "$src" "${skill_dir}/SKILL.md"
-    return
-  fi
-
-  cq_die "Cannot find skills/cq-workers/SKILL.md — please reinstall cq"
-}
-
-_install_init_skill() {
-  local project_dir="$1"
-  local skill_dir="${project_dir}/.claude/skills/cq-setup"
-  mkdir -p "$skill_dir"
-
-  local src="${CQ_SCRIPT_DIR}/skills/cq-setup/SKILL.md"
-  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq-setup/SKILL.md"
-  if [[ -f "$src" ]]; then
-    cp "$src" "${skill_dir}/SKILL.md"
-    return
-  fi
-
-  # cq-setup is optional — don't die if not found
-}
-
-_install_agents() {
-  local project_dir="$1"
-  local agents_dir="${project_dir}/.claude/agents"
-  mkdir -p "$agents_dir"
-
-  # Install all agent definitions from cq distribution
-  local agents_src="${CQ_SCRIPT_DIR}/.claude/agents"
-  [[ ! -d "$agents_src" ]] && agents_src="${CQ_SCRIPT_DIR}/../.claude/agents"
-  if [[ -d "$agents_src" ]]; then
-    cp "$agents_src"/*.md "$agents_dir/" 2>/dev/null || true
-  fi
-
-  # Migrate legacy agent-mapping.json into settings.json agent_mappings key
-  local mapping_file="${project_dir}/.claudekiq/agent-mapping.json"
-  if [[ -f "$mapping_file" ]]; then
-    local settings_file="${project_dir}/.claudekiq/settings.json"
-    local mappings
-    mappings=$(cat "$mapping_file")
-    # Only migrate if mappings is non-empty object
-    if [[ "$(jq 'length' <<< "$mappings" 2>/dev/null)" -gt 0 ]]; then
-      local existing='{}'
-      [[ -f "$settings_file" ]] && existing=$(cat "$settings_file")
-      existing=$(jq --argjson m "$mappings" '.agent_mappings = (.agent_mappings // {} | . * $m)' <<< "$existing")
-      echo "$existing" > "$settings_file"
-    fi
-    rm -f "$mapping_file"
-  fi
-}
-
-_install_hooks() {
-  local project_dir="$1"
-  local hooks_dir="${project_dir}/.claude/hooks"
-  mkdir -p "$hooks_dir"
-
-  # Install PostToolUse hook
-  local src="${CQ_SCRIPT_DIR}/.claude/hooks/PostToolUse.sh"
-  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../.claude/hooks/PostToolUse.sh"
-  if [[ -f "$src" ]]; then
-    cp "$src" "${hooks_dir}/PostToolUse.sh"
-    chmod +x "${hooks_dir}/PostToolUse.sh"
-  fi
-}
-
-_install_settings() {
-  local project_dir="$1"
-  local settings_file="${project_dir}/.claude/settings.json"
-
-  # Install project-scoped Claude Code settings (hooks config)
-  # Only install if no settings.json exists yet — don't overwrite user customizations
-  if [[ ! -f "$settings_file" ]]; then
-    local src="${CQ_SCRIPT_DIR}/.claude/settings.json"
-    [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../.claude/settings.json"
-    if [[ -f "$src" ]]; then
-      cp "$src" "$settings_file"
-    fi
-  fi
+  local cq_home="${HOME}/.cq"
+  local plugin_dir="${project_dir}/.claude-plugin"
+  mkdir -p "$plugin_dir"
+  jq -cn --arg home "$cq_home" '{
+    name:"claudekiq", version:"3.1.0",
+    description:"Filesystem-backed workflow engine for Claude Code",
+    skills:[($home+"/skills/cq"),($home+"/skills/cq-agent"),($home+"/skills/cq-workers"),($home+"/skills/cq-setup")]
+  }' > "${plugin_dir}/plugin.json"
 }
 
 _install_mcp_config() {
@@ -242,6 +119,126 @@ _install_mcp_config() {
 }
 MCP_EOF
   fi
+}
+
+# --- Hooks management ---
+
+cmd_hooks() {
+  local subcmd="${1:-help}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    install)   _hooks_install "$@" ;;
+    uninstall) _hooks_uninstall "$@" ;;
+    help|*)
+      echo "Usage: cq hooks <install|uninstall>"
+      echo ""
+      echo "  install    Merge cq hooks into .claude/settings.json"
+      echo "  uninstall  Remove cq hooks from .claude/settings.json"
+      ;;
+  esac
+}
+
+_hooks_install() {
+  local project_dir="${CQ_PROJECT_ROOT:-$PWD}"
+  local settings_file="${project_dir}/.claude/settings.json"
+  mkdir -p "${project_dir}/.claude"
+
+  # Define cq hooks
+  local cq_hooks
+  cq_hooks=$(cat <<'HOOKS_JSON'
+{
+  "SessionEnd": [
+    {
+      "type": "command",
+      "command": "cq check-stale --timeout=0 --mark 2>/dev/null || true",
+      "async": true
+    }
+  ],
+  "PreToolUse": [
+    {
+      "matcher": "Bash",
+      "type": "command",
+      "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) echo \"Blocked: cannot delete .claudekiq directory — use cq cleanup instead\" >&2; exit 2;; *\"git checkout\"*|*\"git switch\"*) if ls .claudekiq/runs/*/meta.json 2>/dev/null | head -1 | grep -q .; then for f in .claudekiq/runs/*/meta.json; do status=$(jq -r .status \"$f\" 2>/dev/null); if [ \"$status\" = \"running\" ] || [ \"$status\" = \"gated\" ]; then echo \"Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first.\" >&2; exit 2; fi; done; fi;; *\"Edit\"*|*\"Write\"*) :;; esac; exit 0'"
+    },
+    {
+      "matcher": "Edit",
+      "type": "command",
+      "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); case \"$path\" in */.claudekiq/runs/*) echo \"Blocked: do not edit run files directly — use cq commands instead\" >&2; exit 2;; esac; exit 0'"
+    },
+    {
+      "matcher": "Write",
+      "type": "command",
+      "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); case \"$path\" in */.claudekiq/runs/*) echo \"Blocked: do not write to run files directly — use cq commands instead\" >&2; exit 2;; esac; exit 0'"
+    }
+  ],
+  "SubagentStop": [
+    {
+      "type": "command",
+      "command": "bash -c 'input=$(cat); desc=$(echo \"$input\" | jq -r \".description // empty\"); case \"$desc\" in Worker:*) if command -v osascript &>/dev/null; then osascript -e \"display notification \\\"$desc completed\\\" with title \\\"cq: Worker Done\\\" sound name \\\"Ping\\\"\" &>/dev/null; elif command -v notify-send &>/dev/null; then notify-send \"cq: Worker Done\" \"$desc completed\" &>/dev/null; fi;; esac; exit 0'",
+      "async": true
+    }
+  ],
+  "WorktreeCreate": [
+    {
+      "type": "command",
+      "command": "bash -c 'input=$(cat); worktree_path=$(echo \"$input\" | jq -r \".worktree_path // empty\"); if [ -n \"$worktree_path\" ]; then cd \"$worktree_path\" && cq init 2>/dev/null; fi; exit 0'",
+      "async": true
+    }
+  ]
+}
+HOOKS_JSON
+)
+
+  local existing='{}'
+  if [[ -f "$settings_file" ]]; then
+    existing=$(cat "$settings_file")
+  fi
+
+  # Merge: for each hook type, append cq hooks to existing hooks
+  local updated
+  updated=$(jq --argjson cq_hooks "$cq_hooks" '
+    .hooks = (.hooks // {}) |
+    .hooks.SessionEnd = ((.hooks.SessionEnd // []) + $cq_hooks.SessionEnd | unique_by(.command)) |
+    .hooks.PreToolUse = ((.hooks.PreToolUse // []) + $cq_hooks.PreToolUse | unique_by(.command)) |
+    .hooks.SubagentStop = ((.hooks.SubagentStop // []) + $cq_hooks.SubagentStop | unique_by(.command)) |
+    .hooks.WorktreeCreate = ((.hooks.WorktreeCreate // []) + $cq_hooks.WorktreeCreate | unique_by(.command))
+  ' <<< "$existing")
+
+  echo "$updated" > "$settings_file"
+
+  cq_json_out '{status:"installed"}' || \
+    cq_info "Hooks installed in ${settings_file}"
+}
+
+_hooks_uninstall() {
+  local project_dir="${CQ_PROJECT_ROOT:-$PWD}"
+  local settings_file="${project_dir}/.claude/settings.json"
+
+  if [[ ! -f "$settings_file" ]]; then
+    cq_json_out '{status:"no_settings"}' || \
+      cq_info "No .claude/settings.json found"
+    return 0
+  fi
+
+  # Remove cq-specific hook entries (identified by cq commands in them)
+  local updated
+  updated=$(jq '
+    if .hooks then
+      .hooks |= with_entries(
+        .value |= map(select(
+          (.command // "" | test("cq |cq$|\\.claudekiq")) | not
+        ))
+      ) |
+      .hooks |= with_entries(select(.value | length > 0))
+    else . end |
+    if .hooks == {} then del(.hooks) else . end
+  ' "$settings_file")
+
+  echo "$updated" > "$settings_file"
+
+  cq_json_out '{status:"uninstalled"}' || \
+    cq_info "Hooks removed from ${settings_file}"
 }
 
 cmd_version() {
@@ -308,7 +305,8 @@ Iteration:
 
 Setup:
   init [--mcp]                      Initialize .claudekiq/ in current project
-  scan                              Discover agents, skills, and plugins
+  scan                              Discover agents and skills
+  hooks install|uninstall           Manage cq hooks in .claude/settings.json
   version                           Show version
   help [command]                    Show help
   schema [command]                  Show command schema (JSON)
@@ -345,6 +343,7 @@ _help_for_command() {
     config)    echo "Usage: cq config | cq config get <key> | cq config set [--global] <key> <value>" ;;
     init)    echo "Usage: cq init [--mcp]" ;;
     scan)    echo "Usage: cq scan [--json]" ;;
+    hooks)   echo "Usage: cq hooks install|uninstall" ;;
     for-each) echo "Usage: cq for-each --over=<list> --var=<name> --command=<cmd> | cq for-each <run_id> <step_id>" ;;
     parallel) echo "Usage: cq parallel --steps=<json_array> | cq parallel <run_id> <step_id>" ;;
     batch)   echo "Usage: cq batch --workflow=<name> --jobs=<json_array> | cq batch <run_id> <step_id>" ;;

@@ -18,30 +18,44 @@ teardown() {
   [ -d .claudekiq/workflows ]
   [ -d .claudekiq/workflows/private ]
   [ -d .claudekiq/runs ]
-  [ -d .claudekiq/plugins ]
   [ -f .claudekiq/settings.json ]
 }
 
-@test "init creates Claude Code skill" {
+@test "init creates .claude-plugin/plugin.json" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null
-  [ -f .claude/skills/cq/SKILL.md ]
+  [ -f .claude-plugin/plugin.json ]
+  jq -e '.name == "claudekiq"' .claude-plugin/plugin.json
+  jq -e '.version == "3.1.0"' .claude-plugin/plugin.json
+  jq -e '.skills | length == 4' .claude-plugin/plugin.json
 }
 
-@test "init skill has correct frontmatter" {
+@test "init does not create .claude/skills" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null
-  grep -q '^name: cq' .claude/skills/cq/SKILL.md
+  [ ! -d .claude/skills ]
 }
 
-@test "init re-run updates skill" {
+@test "init does not create .claude/hooks" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null
-  # Corrupt the skill
-  echo "old" > .claude/skills/cq/SKILL.md
+  [ ! -d .claude/hooks ]
+}
+
+@test "init does not create .claude/settings.json" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  [ ! -f .claude/settings.json ]
+}
+
+@test "init re-run updates plugin.json" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  # Corrupt plugin.json
+  echo '{}' > .claude-plugin/plugin.json
   "$CQ" init >/dev/null
   # Should be restored
-  grep -q 'Claudekiq Workflow Runner' .claude/skills/cq/SKILL.md
+  jq -e '.name == "claudekiq"' .claude-plugin/plugin.json
 }
 
 @test "init creates .gitignore entries" {
@@ -49,6 +63,7 @@ teardown() {
   "$CQ" init >/dev/null
   grep -qF '.claudekiq/workflows/private/' .gitignore
   grep -qF '.claudekiq/runs/' .gitignore
+  grep -qF '.claudekiq/workers/' .gitignore
 }
 
 @test "init is idempotent" {
@@ -97,6 +112,12 @@ teardown() {
   jq -e '.mcpServers.cq' .mcp.json
 }
 
+@test "init does not create .claudekiq/plugins" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  [ ! -d .claudekiq/plugins ]
+}
+
 @test "version shows version" {
   run "$CQ" version
   [ "$status" -eq 0 ]
@@ -119,4 +140,59 @@ teardown() {
   run "$CQ" nonexistent
   [ "$status" -eq 1 ]
   [[ "$output" == *"unknown command"* ]]
+}
+
+# --- Hooks tests ---
+
+@test "hooks install creates .claude/settings.json with hooks" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  run "$CQ" hooks install
+  [ "$status" -eq 0 ]
+  [ -f .claude/settings.json ]
+  jq -e '.hooks.SessionEnd | length > 0' .claude/settings.json
+  jq -e '.hooks.PreToolUse | length > 0' .claude/settings.json
+}
+
+@test "hooks install merges with existing settings" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  mkdir -p .claude
+  echo '{"customKey": true}' > .claude/settings.json
+  run "$CQ" hooks install
+  [ "$status" -eq 0 ]
+  jq -e '.customKey == true' .claude/settings.json
+  jq -e '.hooks.SessionEnd | length > 0' .claude/settings.json
+}
+
+@test "hooks uninstall removes cq hooks" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  "$CQ" hooks install >/dev/null
+  jq -e '.hooks.SessionEnd | length > 0' .claude/settings.json
+  run "$CQ" hooks uninstall
+  [ "$status" -eq 0 ]
+  # hooks should be removed (or empty)
+  run jq -e '.hooks.SessionEnd' .claude/settings.json
+  [ "$status" -ne 0 ]
+}
+
+@test "hooks uninstall preserves non-cq hooks" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  mkdir -p .claude
+  cat > .claude/settings.json <<'JSON'
+{
+  "hooks": {
+    "SessionEnd": [
+      {"type": "command", "command": "echo custom hook"}
+    ]
+  }
+}
+JSON
+  "$CQ" hooks install >/dev/null
+  "$CQ" hooks uninstall >/dev/null
+  # Custom hook should remain
+  jq -e '.hooks.SessionEnd | length == 1' .claude/settings.json
+  jq -e '.hooks.SessionEnd[0].command == "echo custom hook"' .claude/settings.json
 }

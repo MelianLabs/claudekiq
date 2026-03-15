@@ -35,8 +35,8 @@ Command dispatch is a case statement in `cq` that maps command names to `cmd_*` 
 
 Commands were split from a monolithic `commands.sh` into domain-specific files:
 
-- `setup.sh` — `init`, `version`, `help`
-- `scan.sh` — `scan` (discover agents, skills, plugins)
+- `setup.sh` — `init`, `version`, `help`, `hooks`
+- `scan.sh` — `scan` (discover agents, skills)
 - `lifecycle.sh` — `start`, `status`, `list`, `log` (includes agent target validation)
 - `flow.sh` — `pause`, `resume`, `cancel`, `retry`
 - `steps.sh` — `step-done`, `skip`
@@ -62,45 +62,47 @@ All run state lives in `.claudekiq/runs/<run_id>/` (gitignored):
 
 ### Key Concepts
 
-- **Step types**: `bash`, `agent`, `skill`, `manual`, `subflow`, `for_each`, `parallel`, `batch`, plus custom types via agent-backed plugins (`.claude/agents/<type>.md`) or bash plugins (`.claudekiq/plugins/<type>.sh`)
-- **Gates**: `auto` (continue), `human` (wait for approval), `review` (retry loop with max_visits escalation)
-- **Interpolation**: `{{expr}}` in targets/args, resolved from context via jq. Supports nested access (`{{config.timeout}}`), array indexing (`{{items[0].name}}`), and jq expressions (`{{results | length}}`). Backward compatible with flat keys.
+- **Step types**: `bash`, `agent`, `skill`, `manual`, `subflow`, `for_each`, `parallel`, `batch`, plus custom types via agent-backed definitions (`.claude/agents/<type>.md`)
+- **Gates**: `auto` (continue), `human` (wait for approval via `AskUserQuestion`), `review` (retry loop with max_visits escalation)
+- **Interpolation**: `{{expr}}` in bash targets only, resolved from context via jq. Agent steps receive raw prompt + context — Claude decides how to use it. Supports nested access (`{{config.timeout}}`), array indexing (`{{items[0].name}}`), and jq expressions (`{{results | length}}`).
 - **Config resolution**: global (`~/.cq/config.json`) merged with project (`.claudekiq/settings.json`), project wins
-- **Agent mappings**: stored in `.claudekiq/settings.json` under `agent_mappings` key (replaces legacy `agent-mapping.json`)
+- **Agent mappings**: stored in `.claudekiq/settings.json` under `agent_mappings` key
 - **All commands support `--json`** for machine-readable output
 - **Headless mode**: `--headless` flag auto-approves gates and forces JSON output
 
+### Project Setup (`cq init`)
+
+`cq init` creates only:
+- `.claudekiq/` directory structure (workflows, runs, settings.json)
+- `.claude-plugin/plugin.json` pointing to `~/.cq/skills/`
+- `.gitignore` entries
+
+It does **not** touch `.claude/` (no skills, hooks, agents, or settings.json installed). Skills are served via the `.claude-plugin/plugin.json` plugin system from `~/.cq/skills/`.
+
+### Hooks System (`cq hooks`)
+
+Hooks are opt-in via `cq hooks install`:
+- Merges cq-specific hooks into `.claude/settings.json` (SessionEnd, PreToolUse, SubagentStop, WorktreeCreate)
+- `cq hooks uninstall` cleanly removes only cq hooks
+- Configurable notification commands in `.claudekiq/settings.json` → `notifications`: `on_start`, `on_gate`, `on_fail`, `on_complete`
+- `cq_fire_hook()` emits structured JSON events with version, status, and timestamp to stderr
+
 ### Project Discovery (`cq scan`)
 
-`cq scan` discovers agents, skills, and plugins available in the project:
+`cq scan` discovers agents and skills available in the project:
 - Scans `.claude/agents/*.md` — parses YAML frontmatter for name, model, tools, description
 - Scans `.claude/skills/*/SKILL.md` — parses frontmatter for name, description, allowed-tools
-- Scans `.claudekiq/plugins/*.sh` — detects bash plugin scripts
-- Writes results to `.claudekiq/settings.json` as `agents`, `skills`, `plugins` arrays
+- Writes results to `.claudekiq/settings.json` as `agents`, `skills` arrays
 - Preserves existing user config keys (including `agent_mappings`) during merge
 - Auto-runs on `cq init` (both fresh and re-init)
 
-### Plugin System
+### Custom Step Types
 
-Custom step types resolve in order: agent-backed (`.claude/agents/<type>.md`) → bash plugin (`.claudekiq/plugins/<type>.sh`) → scan results fallback.
-
-Bash plugin JSON protocol:
-- **stdin**: Step JSON (interpolated)
-- **stdout**: `{"status":"pass"|"fail", "output":{...}, "error":"..."}`
-- **exit code**: 0 = pass, non-zero = fail
-- **Environment**: `CQ_RUN_ID`, `CQ_STEP_ID`, `CQ_PROJECT_ROOT`
-
-The `cq_resolve_step_type()` function in `lib/core.sh` handles resolution.
-
-### Hooks System
-
-Two layers of hooks:
-
-1. **Claude Code native hooks** (`.claude/settings.json`): `SessionEnd` (stale detection), `PreToolUse` (safety guards), `SubagentStop` (worker notifications), `WorktreeCreate` (auto-init worktrees)
-
-2. **PostToolUse hook** (`.claude/hooks/PostToolUse.sh`): Fires desktop notifications for cq events — `step-done` (gate/complete/fail), `start`, `cancel`, `retry`, and `todos`
-
-3. **Configurable notification commands** (`.claudekiq/settings.json` → `notifications`): `on_start`, `on_gate`, `on_fail`, `on_complete` — shell commands executed with `CQ_HOOK`, `CQ_RUN_ID`, `CQ_STEP_ID`, `CQ_TEMPLATE` env vars
+Custom step types resolve via `cq_resolve_step_type()` in `lib/core.sh`:
+1. Built-in types (`bash`, `agent`, `skill`, etc.)
+2. Agent-backed: `.claude/agents/<type>.md` file exists
+3. Scan results: `agents` array in settings.json
+4. Otherwise: `"unknown"`
 
 ### Iteration Commands
 

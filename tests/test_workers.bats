@@ -212,16 +212,12 @@ teardown() {
 }
 
 # ============================================================
-# init creates workers skill
+# init creates plugin.json with workers skill reference
 # ============================================================
 
-@test "init creates cq-workers skill" {
-  [ -f "$TEST_DIR/.claude/skills/cq-workers/SKILL.md" ]
-}
-
-@test "init workers skill has correct frontmatter" {
-  run head -3 "$TEST_DIR/.claude/skills/cq-workers/SKILL.md"
-  [[ "$output" == *"name: cq-workers"* ]]
+@test "init creates plugin.json referencing cq-workers" {
+  run jq -e '.skills[] | select(endswith("/cq-workers"))' "$TEST_DIR/.claude-plugin/plugin.json"
+  [ "$status" -eq 0 ]
 }
 
 @test "init adds workers dir to gitignore" {

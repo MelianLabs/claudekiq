@@ -155,7 +155,7 @@ cmd_workflows_validate() {
     local kind
     kind=$(cq_resolve_step_type "$stype")
     if [[ "$kind" == "unknown" ]]; then
-      echo "Step type '${stype}' is not a built-in type and no matching agent or plugin was found (run 'cq scan' to discover plugins)"
+      echo "Step type '${stype}' is not a built-in type and no matching agent was found (run 'cq scan' to discover agents)"
     fi
   done)
   while IFS= read -r warn; do

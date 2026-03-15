@@ -36,14 +36,14 @@ From the step definition, extract:
 
 ## Step 2: Build Agent Prompt
 
-Assemble the prompt for the agent:
+Pass raw prompt + context to the agent. Claude decides how to execute.
 
-1. Start with the step's `prompt` field (interpolate `{{variables}}` from context)
-2. If `context` array is defined, append a "Context" section with each key's value from the run context
-3. If no `prompt` field, fall back to interpolated `args_template` (backward compat)
+1. Start with the step's `prompt` field as-is (no `{{variable}}` interpolation)
+2. If `context` array is defined, append a "Context" section with each key's raw value from the run context
+3. If no `prompt` field, fall back to `args_template` (backward compat)
 4. If neither exists but `target` starts with `@`, use the step `name` as a minimal prompt
 
-The assembled prompt should give the agent everything it needs to work autonomously.
+The assembled prompt gives the agent everything it needs to work autonomously.
 
 ## Step 3: Set Up Heartbeat
 
@@ -56,10 +56,11 @@ For non-background steps:
 
 If `target` starts with `@`:
 1. Strip the `@` prefix
-2. Check for agent mapping: `jq -r '.agent_mappings["<name>"] // empty' .claudekiq/settings.json`
-3. If mapped, use the mapped name; otherwise use the stripped name
-4. Verify the agent exists: `.claude/agents/<name>.md` file OR in scan results
-5. If not found → report error, return fail outcome
+2. Check if agent file exists directly: `.claude/agents/<name>.md`
+3. If not found, check for agent mapping: `jq -r '.agent_mappings["<name>"] // empty' .claudekiq/settings.json`
+4. If mapped, use the mapped name; otherwise use the stripped name
+5. Verify the agent exists: `.claude/agents/<name>.md` file OR in scan results
+6. If not found → report error, return fail outcome
 
 If `target` is empty or doesn't start with `@`: use `general-purpose` as the agent type.
 

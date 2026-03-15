@@ -411,10 +411,17 @@ cq_fire_hook() {
     template=$(jq -r '.template // ""' "${run_dir}/meta.json")
   fi
 
+  local run_status=""
+  if [[ -f "${run_dir}/meta.json" ]]; then
+    run_status=$(jq -r '.status // ""' "${run_dir}/meta.json")
+  fi
+
   # Emit structured JSON event to stderr for Claude Code hooks to parse
   jq -cn --arg hook "$hook_name" --arg run_id "$run_id" \
     --arg step "$current_step" --arg template "$template" \
-    '{event: "cq_hook", hook: $hook, run_id: $run_id, step: $step, template: $template}' >&2
+    --arg status "$run_status" --arg version "$CQ_VERSION" \
+    --arg timestamp "$(cq_now)" \
+    '{event: "cq_hook", version: $version, hook: $hook, run_id: $run_id, step: $step, template: $template, status: $status, timestamp: $timestamp}' >&2
 
   # If a notification command is configured, pass context via environment variables
   # instead of interpolating into the command string (prevents shell injection)
@@ -481,8 +488,8 @@ cq_valid_model() {
   return 1
 }
 
-# Build a complete prompt for an agent step by assembling the step's prompt
-# field with resolved context variables.
+# Build a complete prompt for an agent step by assembling the step's raw prompt
+# field with raw context values. No interpolation — Claude decides how to use context.
 # Usage: cq_build_step_prompt <step_json> <ctx_json>
 cq_build_step_prompt() {
   local step_json="$1" ctx_json="$2"
@@ -491,13 +498,13 @@ cq_build_step_prompt() {
   prompt=$(jq -r '.prompt // empty' <<< "$step_json")
   context_keys=$(jq -r '.context // [] | .[]' <<< "$step_json")
 
-  # Start with the step prompt (interpolated)
+  # Start with the raw step prompt (no interpolation for agent steps)
   local result=""
   if [[ -n "$prompt" ]]; then
-    result=$(cq_interpolate "$prompt" "$ctx_json")
+    result="$prompt"
   fi
 
-  # Append context key values if specified
+  # Append raw context key values if specified
   if [[ -n "$context_keys" ]]; then
     local ctx_section=""
     local key
@@ -520,7 +527,7 @@ cq_build_step_prompt() {
 # --- Step type resolution ---
 
 # Resolve a step type to its handler kind.
-# Returns: "builtin", "agent", "plugin", or "unknown"
+# Returns: "builtin", "agent", or "unknown"
 # Usage: kind=$(cq_resolve_step_type "deploy")
 cq_resolve_step_type() {
   local step_type="$1"
@@ -535,18 +542,12 @@ cq_resolve_step_type() {
     echo "agent"; return
   fi
 
-  # 3. Bash plugin: .claudekiq/plugins/<type>.sh
-  if [[ -x "${CQ_PROJECT_ROOT}/.claudekiq/plugins/${step_type}.sh" ]]; then
-    echo "plugin"; return
-  fi
-
-  # 4. Check scan results in settings.json
+  # 3. Check scan results for agents
   local settings="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
   if [[ -f "$settings" ]]; then
     local found
     found=$(jq -r --arg t "$step_type" '
       if (.agents // [] | map(.name) | index($t)) then "agent"
-      elif (.plugins // [] | map(.name) | index($t)) then "plugin"
       else empty end' "$settings" 2>/dev/null)
     if [[ -n "$found" ]]; then echo "$found"; return; fi
   fi

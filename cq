@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-export CQ_VERSION="3.0.0"
+export CQ_VERSION="3.1.0"
 
 # --- Resolve script location and source libs ---
 
@@ -135,6 +135,9 @@ case "$COMMAND" in
 
   # Discovery
   scan)           cmd_scan "$@" ;;
+
+  # Hooks management
+  hooks)          cmd_hooks "$@" ;;
 
   # Heartbeat / stale detection
   heartbeat)      cmd_heartbeat "$@" ;;

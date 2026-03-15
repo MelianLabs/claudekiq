@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# test_plugins.bats — Tests for plugin system (step type resolution)
+# test_plugins.bats — Tests for step type resolution (agent-backed custom types)
 
 load setup.bash
 
@@ -34,39 +34,12 @@ teardown() { teardown_test_project; }
   done
 }
 
-@test "resolve_step_type returns agent for agent-backed plugin" {
+@test "resolve_step_type returns agent for agent-backed custom type" {
   source "$CQ_ROOT/lib/core.sh"
   export CQ_PROJECT_ROOT="$TEST_DIR"
 
   mkdir -p .claude/agents
   cp "$FIXTURES/mock-agent.md" .claude/agents/deploy.md
-
-  result=$(cq_resolve_step_type "deploy")
-  [ "$result" = "agent" ]
-}
-
-@test "resolve_step_type returns plugin for bash plugin" {
-  source "$CQ_ROOT/lib/core.sh"
-  export CQ_PROJECT_ROOT="$TEST_DIR"
-
-  mkdir -p .claudekiq/plugins
-  cp "$FIXTURES/mock-plugin.sh" .claudekiq/plugins/deploy.sh
-  chmod +x .claudekiq/plugins/deploy.sh
-
-  result=$(cq_resolve_step_type "deploy")
-  [ "$result" = "plugin" ]
-}
-
-@test "resolve_step_type agent takes priority over bash plugin" {
-  source "$CQ_ROOT/lib/core.sh"
-  export CQ_PROJECT_ROOT="$TEST_DIR"
-
-  # Both exist
-  mkdir -p .claude/agents
-  cp "$FIXTURES/mock-agent.md" .claude/agents/deploy.md
-  mkdir -p .claudekiq/plugins
-  cp "$FIXTURES/mock-plugin.sh" .claudekiq/plugins/deploy.sh
-  chmod +x .claudekiq/plugins/deploy.sh
 
   result=$(cq_resolve_step_type "deploy")
   [ "$result" = "agent" ]
@@ -90,67 +63,6 @@ teardown() { teardown_test_project; }
 
   result=$(cq_resolve_step_type "remote-deploy")
   [ "$result" = "agent" ]
-}
-
-@test "resolve_step_type checks scan results for plugin" {
-  source "$CQ_ROOT/lib/core.sh"
-  export CQ_PROJECT_ROOT="$TEST_DIR"
-
-  # Write scan results with a plugin that doesn't have a .sh file on disk
-  jq '. + {"plugins":[{"name":"custom-step"}]}' .claudekiq/settings.json > .claudekiq/settings.json.tmp
-  mv .claudekiq/settings.json.tmp .claudekiq/settings.json
-
-  result=$(cq_resolve_step_type "custom-step")
-  [ "$result" = "plugin" ]
-}
-
-# --- Bash plugin execution protocol ---
-
-@test "bash plugin receives step JSON on stdin" {
-  mkdir -p .claudekiq/plugins
-  cat > .claudekiq/plugins/echo-input.sh <<'PLUGIN'
-#!/usr/bin/env bash
-input=$(cat)
-echo "{\"status\":\"pass\",\"output\":{\"received\":$input}}"
-PLUGIN
-  chmod +x .claudekiq/plugins/echo-input.sh
-
-  local step_json='{"id":"test","type":"echo-input","target":"hello"}'
-  local result
-  result=$(echo "$step_json" | CQ_RUN_ID=test CQ_STEP_ID=test CQ_PROJECT_ROOT="$TEST_DIR" .claudekiq/plugins/echo-input.sh)
-
-  [ "$(echo "$result" | jq -r '.status')" = "pass" ]
-  [ "$(echo "$result" | jq -r '.output.received.target')" = "hello" ]
-}
-
-@test "bash plugin exit 0 means pass" {
-  mkdir -p .claudekiq/plugins
-  cat > .claudekiq/plugins/pass-plugin.sh <<'PLUGIN'
-#!/usr/bin/env bash
-cat > /dev/null
-echo '{"status":"pass","output":{"message":"ok"}}'
-exit 0
-PLUGIN
-  chmod +x .claudekiq/plugins/pass-plugin.sh
-
-  run bash -c 'echo "{}" | .claudekiq/plugins/pass-plugin.sh'
-  [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq -r '.status')" = "pass" ]
-}
-
-@test "bash plugin exit 1 means fail" {
-  mkdir -p .claudekiq/plugins
-  cat > .claudekiq/plugins/fail-plugin.sh <<'PLUGIN'
-#!/usr/bin/env bash
-cat > /dev/null
-echo '{"status":"fail","error":"something went wrong"}'
-exit 1
-PLUGIN
-  chmod +x .claudekiq/plugins/fail-plugin.sh
-
-  run bash -c 'echo "{}" | .claudekiq/plugins/fail-plugin.sh'
-  [ "$status" -eq 1 ]
-  [ "$(echo "$output" | jq -r '.status')" = "fail" ]
 }
 
 # --- Workflow validation with custom types ---
@@ -187,24 +99,5 @@ steps:
 YAML
 
   run "$CQ" workflows validate .claudekiq/workflows/agent-plugin.yml
-  [ "$status" -eq 0 ]
-}
-
-@test "workflows validate passes with bash plugin custom type" {
-  mkdir -p .claudekiq/plugins
-  cp "$FIXTURES/mock-plugin.sh" .claudekiq/plugins/deploy.sh
-  chmod +x .claudekiq/plugins/deploy.sh
-
-  cat > .claudekiq/workflows/bash-plugin.yml <<'YAML'
-name: bash-plugin-test
-description: Test bash plugin type
-steps:
-  - id: step1
-    type: deploy
-    target: "deploy to staging"
-    gate: auto
-YAML
-
-  run "$CQ" workflows validate .claudekiq/workflows/bash-plugin.yml
   [ "$status" -eq 0 ]
 }
