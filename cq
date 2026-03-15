@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-export CQ_VERSION="3.2.0"
+export CQ_VERSION="3.2.1"
 
 # --- Resolve script location and source libs ---
 

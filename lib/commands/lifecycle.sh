@@ -163,6 +163,10 @@ cmd_start() {
     local marker
     marker=$(cq_marker "$initial_status")
     echo "${marker} Started workflow '${template}' — run ${run_id} (${initial_status})"
+    cq_hint "Create a Task with TaskCreate to track this workflow run."
+    if [[ "$initial_status" == "queued" ]]; then
+      cq_hint "Run is queued. Another run is active. It will start when the current run completes."
+    fi
   fi
 }
 

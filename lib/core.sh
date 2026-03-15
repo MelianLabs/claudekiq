@@ -17,6 +17,13 @@ cq_info() {
   echo "$@"
 }
 
+# Output a natural language hint for Claude to pick up on next actions.
+# Only in non-JSON mode; hints go to stderr to not pollute machine output.
+cq_hint() {
+  [[ "$CQ_JSON" == "true" ]] && return
+  echo "  → $*" >&2
+}
+
 # Output JSON if --json mode is active. Returns 1 (false) when not in JSON mode,
 # allowing: cq_json_out ... || cq_info "text"
 cq_json_out() {

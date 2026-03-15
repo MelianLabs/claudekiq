@@ -69,17 +69,22 @@ All run state lives in `.claudekiq/runs/<run_id>/` (gitignored):
 
 ### Project Setup (`cq init`)
 
-`cq init` creates only:
+`cq init` creates `.claudekiq/` structure, installs hooks, scans project, and outputs context-aware discovery hints:
 - `.claudekiq/` directory structure (workflows, runs, settings.json)
 - `.claude-plugin/plugin.json` pointing to `~/.cq/skills/` (version auto-synced from `$CQ_VERSION`, user-added skills preserved on re-init)
 - `.gitignore` entries
+- Smart output: reports discovered agents, stacks, and available workflows
+- JSON output includes `agents_found`, `stacks_found`, `workflows_found` counts
 
 Hooks are auto-installed into `.claude/settings.json`. Skills are served via the `.claude-plugin/plugin.json` plugin system from `~/.cq/skills/`.
+
+`/cq-setup` is self-contained: it auto-initializes if `cq init` hasn't been run yet.
 
 ### Hooks System (`cq hooks`)
 
 Hooks are auto-installed by `cq init`:
 - Merges cq-specific hooks into `.claude/settings.json` (SessionEnd, PreToolUse, PostToolUse, WorktreeCreate)
+- Smart conflict detection: warns when existing non-cq hooks use the same matcher
 - `cq hooks uninstall` cleanly removes only cq hooks
 - Configurable notification commands in `.claudekiq/settings.json` → `notifications`: `on_start`, `on_gate`, `on_fail`, `on_complete`
 - `cq_fire_hook()` emits structured JSON events with version, status, and timestamp to stderr
@@ -110,7 +115,14 @@ Custom step types resolve via `cq_resolve_step_type()` in `lib/core.sh`:
 
 ### Context File (`.claude/cq.md`)
 
-`cq init` and `cq scan` generate `.claude/cq.md` with project context (available workflows, agents, stacks, skills). Claude Code loads this automatically so it always knows the project's workflow capabilities.
+`cq init` and `cq scan` generate `.claude/cq.md` with comprehensive project context:
+- Available workflows with step summaries (step names, gate types, params)
+- Detected agents, stacks, and skills
+- Usage patterns (start, monitor, approve, skip, cancel)
+- Team workflow notes (concurrency, agents)
+- Notification config visibility
+
+Claude Code loads this automatically so it always knows the project's workflow capabilities.
 
 ### Safety Configuration
 
@@ -155,6 +167,26 @@ Beyond basic schema checks, validation detects:
 - **Missing context variables** — `{{var}}` in bash steps not declared in defaults/params
 - **Unreachable steps** — steps not reachable from the first step via any route
 - **Extends validation** — base exists, no circular extends, valid override/remove IDs
+
+### CLI Output Hints
+
+Commands emit natural language hints (to stderr) guiding Claude's next action:
+- `cq start` → "Create a Task with TaskCreate to track this workflow run."
+- `cq step-done` (gated) → "Use AskUserQuestion to prompt the user for approval."
+- `cq step-done` (completed) → "Update the workflow Task to completed via TaskUpdate."
+- `cq todos` → "Use AskUserQuestion to present these pending actions to the user."
+- `cq resume` → "Enter the runner loop to continue from step '<step>'."
+
+Hints are suppressed in `--json` mode. Helper: `cq_hint()` in `lib/core.sh`.
+
+### Skill Integration with Claude Code
+
+Skills (`/cq`, `/cq-agent`, `/cq-setup`) use precise tool call patterns for reliable Claude Code integration:
+- **Task mirroring**: MANDATORY TaskCreate on workflow start, TaskUpdate on step progress/completion
+- **TODO sync**: Lazy sync at explicit points — session start, gate events, workflow completion
+- **Gates**: Exact AskUserQuestion patterns with options for approve/reject/override
+- **Agent dispatch**: Exact Agent tool call with subagent_type, model, isolation parameters
+- **Error recovery**: Log errors to context, mark step failed, continue runner loop
 
 ## Git Safety
 

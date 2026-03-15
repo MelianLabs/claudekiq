@@ -39,8 +39,12 @@ cmd_resume() {
   cq_update_meta "$run_id" '.status = "running"'
   cq_log_event "$run_dir" "run_resumed" '{}'
 
-  cq_json_out --arg id "$run_id" '{run_id:$id, status:"running"}' || \
+  local current_step
+  current_step=$(jq -r '.current_step // ""' <<< "$meta")
+  cq_json_out --arg id "$run_id" '{run_id:$id, status:"running"}' || {
     cq_info "$(cq_marker "running") Resumed run ${run_id}"
+    cq_hint "Run resumed. Enter the runner loop to continue from step '${current_step}'."
+  }
 }
 
 cmd_cancel() {
@@ -61,8 +65,10 @@ cmd_cancel() {
       cq_log_event "$run_dir" "run_cancelled" '{}'
       # Cascade cancel to child runs
       _cascade_to_children "$run_id" "cancel"
-      cq_json_out --arg id "$run_id" '{run_id:$id, status:"cancelled"}' || \
+      cq_json_out --arg id "$run_id" '{run_id:$id, status:"cancelled"}' || {
         cq_info "$(cq_marker "cancelled") Cancelled run ${run_id}"
+        cq_hint "Run cancelled. Update the workflow Task to cancelled via TaskUpdate."
+      }
       ;;
   esac
 }

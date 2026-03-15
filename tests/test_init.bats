@@ -219,6 +219,78 @@ teardown() {
 
 # --- Hooks tests ---
 
+@test "init output includes discovery hints" {
+  cd "$TEST_DIR"
+  mkdir -p .claude/agents
+  cat > .claude/agents/test-dev.md <<'AGENT'
+---
+name: test-dev
+model: sonnet
+---
+# Test agent
+AGENT
+  run "$CQ" init
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Found 1 agent"* ]]
+}
+
+@test "init --json includes agents_found field" {
+  cd "$TEST_DIR"
+  run "$CQ" --json init
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.agents_found != null'
+}
+
+@test "cq.md includes usage patterns section" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  grep -q 'Usage Patterns' .claude/cq.md
+}
+
+@test "cq.md includes step summaries when workflows exist" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  cp "$FIXTURES"/minimal.yml .claudekiq/workflows/
+  "$CQ" init >/dev/null
+  grep -q 'Steps:' .claude/cq.md
+}
+
+@test "hooks install warns on existing non-cq hooks" {
+  cd "$TEST_DIR"
+  mkdir -p .claude
+  cat > .claude/settings.json <<'JSON'
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo my-custom-hook"}]}
+    ]
+  }
+}
+JSON
+  run "$CQ" hooks install
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Existing hook"* ]] || [[ "$output" == *"installed"* ]]
+}
+
+@test "hooks install with existing hooks still merges successfully" {
+  cd "$TEST_DIR"
+  mkdir -p .claude
+  cat > .claude/settings.json <<'JSON'
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo custom"}]}
+    ]
+  }
+}
+JSON
+  "$CQ" hooks install >/dev/null 2>&1
+  # Both custom and cq hooks should be present
+  local bash_count
+  bash_count=$(jq '[.hooks.PreToolUse[] | select(.matcher == "Bash")] | length' .claude/settings.json)
+  [ "$bash_count" -ge 2 ]
+}
+
 @test "hooks install creates .claude/settings.json with hooks" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null

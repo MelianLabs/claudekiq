@@ -18,11 +18,11 @@ Parse the arguments: `<run_id> <step_id>`
 
 ## Step 1: Load Step Definition
 
-```bash
-cq status <run_id> --json
+```
+Bash(command: "cq status <run_id> --json")
 ```
 
-Extract:
+From the JSON response, extract:
 - The step definition from `steps` array where `id == <step_id>`
 - The full context from `ctx`
 - The step's state from `state.<step_id>` (visit count, attempt)
@@ -36,6 +36,7 @@ From the step definition, extract:
 - `outputs` — expected output keys
 - `background` — whether to run in background
 - `timeout` — timeout in seconds
+- `isolation` — if set to `worktree`, pass to Agent tool for isolated execution
 
 ## Step 2: Build Agent Prompt
 
@@ -52,41 +53,50 @@ The assembled prompt gives the agent everything it needs to work autonomously.
 ## Step 3: Set Up Heartbeat
 
 For non-background steps:
-1. Write initial heartbeat: `cq heartbeat <run_id>`
-2. Create heartbeat cron: `CronCreate(schedule: "*/1 * * * *", command: "cq heartbeat <run_id>")`
-3. Save the `cron_id` for cleanup
+1. Write initial heartbeat: `Bash(command: "cq heartbeat <run_id>")`
+2. Create heartbeat cron:
+   ```
+   CronCreate(schedule: "*/1 * * * *", command: "cq heartbeat <run_id>")
+   ```
+3. Save the returned `cron_id` for cleanup in Step 11
 
 ## Step 4: Resolve Agent Target
 
 If `target` starts with `@`:
-1. Strip the `@` prefix
-2. Check if agent file exists directly: `.claude/agents/<name>.md`
-3. If not found, check for agent mapping: `jq -r '.agent_mappings["<name>"] // empty' .claudekiq/settings.json`
+1. Strip the `@` prefix to get `<name>`
+2. Check if agent file exists: `Bash(command: "test -f .claude/agents/<name>.md && echo found || echo missing")`
+3. If missing, check for mapping: `Bash(command: "jq -r '.agent_mappings[\"<name>\"] // empty' .claudekiq/settings.json")`
 4. If mapped, use the mapped name; otherwise use the stripped name
-5. Verify the agent exists: `.claude/agents/<name>.md` file OR in scan results
-6. If not found → report error, return fail outcome
+5. The resolved name becomes `subagent_type` for the Agent tool
+6. If agent not found anywhere → report error, return fail outcome
 
 If `target` is empty or doesn't start with `@`: use `general-purpose` as the agent type.
 
 ## Step 5: Check for Resume
 
 If `resume: true` AND visit count > 1 (this is a retry):
-1. Check for saved agentId: `cq ctx get _agent_<step_id> <run_id>`
+1. Check for saved agentId: `Bash(command: "cq ctx get _agent_<step_id> <run_id>")`
 2. If found, attempt resume:
    ```
-   Agent(resume: <saved_agentId>, prompt: "Continuing from previous attempt. <assembled_prompt>")
+   Agent(resume: "<saved_agentId>", prompt: "Continuing from previous attempt. <assembled_prompt>")
    ```
-3. If resume fails (agent no longer available), fall through to fresh spawn with note about retry
+3. If resume fails (agent no longer available), clear the saved agentId and fall through to fresh spawn with note about retry
 
 ## Step 6: Spawn Agent
 
-Invoke the Agent tool:
-- `description`: step name (max 5 words)
-- `subagent_type`: resolved agent name (from step 4)
-- `model`: from step definition, or project default from `jq -r '.default_model // "opus"' .claudekiq/settings.json`
-- `prompt`: assembled prompt from step 2
-- `run_in_background`: true if `background: true` or `timeout` is set
-- `isolation`: from step definition (e.g., `isolation: worktree`). If set, pass to Agent tool for isolated execution.
+Invoke the Agent tool with these exact parameters:
+```
+Agent(
+  description: "<step name, max 5 words>",
+  subagent_type: "<resolved agent name from Step 4>",
+  model: "<model from step def, or project default from settings.json>",
+  prompt: "<assembled prompt from Step 2>",
+  run_in_background: <true if background: true or timeout is set, false otherwise>,
+  isolation: "<'worktree' if step has isolation: worktree, omit otherwise>"
+)
+```
+
+For model default: `Bash(command: "jq -r '.default_model // \"opus\"' .claudekiq/settings.json")`
 
 ## Step 7: Handle Timeout
 
@@ -97,30 +107,47 @@ If `timeout` is set and agent runs in background:
 
 ## Step 8: Evaluate Results
 
-Read the agent's response and determine:
-1. **Did the agent achieve the goal?** Use your judgment based on the prompt and the response.
-2. **Outcome**: `pass` if goal achieved, `fail` if not
+Read the agent's response and determine the outcome:
+
+**Mark as PASS if:**
+- Agent explicitly says "completed", "done", "implemented", "fixed", "succeeded"
+- Agent produced the expected output artifacts (files created, tests passing, etc.)
+- Agent's response directly addresses the prompt's goal
+
+**Mark as FAIL if:**
+- Agent says "unable", "cannot", "error", "failed", "could not"
+- Agent's response is empty or truncated
+- Agent explicitly reports an error condition
+- The expected output was not produced
+
+Use your best judgment when signals are mixed, but err toward `pass` if the core goal appears achieved.
 
 ## Step 9: Extract Results
 
 If the step has `outputs` defined:
 - Read the agent's response and extract values for each output key
-- Store each in context: `cq ctx set <key> <value> <run_id>`
+- Store each in context:
+  ```
+  Bash(command: "cq ctx set <key> '<value>' <run_id>")
+  ```
 
 If no `outputs` defined:
-- Store a freeform summary as `_result_<step_id>` in context
+- Store a freeform summary (first 200 chars of agent response):
+  ```
+  Bash(command: "cq ctx set _result_<step_id> '<summary>' <run_id>")
+  ```
 
 ## Step 10: Save Agent ID
 
 Save the agentId for potential future resume:
-```bash
-cq ctx set _agent_<step_id> <agentId> <run_id>
+```
+Bash(command: "cq ctx set _agent_<step_id> <agentId> <run_id>")
 ```
 
 ## Step 11: Clean Up
 
-1. Delete heartbeat cron: `CronDelete(id: <cron_id>)` (if created)
-2. Write final heartbeat: `cq heartbeat <run_id>`
+1. Delete heartbeat cron (if created): `CronDelete(id: "<cron_id>")`
+2. Write final heartbeat: `Bash(command: "cq heartbeat <run_id>")`
 
 ## Step 12: Report
 

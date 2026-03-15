@@ -1,6 +1,6 @@
 ---
 name: cq-setup
-description: "Smart project setup — scans agents/skills/stacks and generates customized workflows based on your project. Use /cq-setup after cq init."
+description: "Smart project setup — scans agents/skills/stacks and generates customized workflows based on your project. Can be run standalone (auto-initializes if needed)."
 allowed-tools: Bash, Read, Glob, Grep, Write, AskUserQuestion
 ---
 
@@ -10,6 +10,14 @@ allowed-tools: Bash, Read, Glob, Grep, Write, AskUserQuestion
 If any required tool (Agent, Skill, etc.) is unavailable, report the error clearly and suggest running via CLI instead.
 
 You generate customized cq workflows based on the project's actual agents, skills, and detected stacks.
+
+## Step 0: Ensure Initialized
+
+Before anything else, ensure the project is initialized:
+```
+Bash(command: "cq init --json")
+```
+If status is `"initialized"` (fresh) or `"exists"` (re-init), proceed to Step 1. If error, report to user.
 
 ## Step 1: Scan the Project
 
@@ -55,20 +63,32 @@ After scanning agents, check if any `@<stack>-dev` targets referenced by convent
 
 ## Step 3: Ask the User
 
-Use AskUserQuestion to ask:
+Use AskUserQuestion with exact tool call:
+```
+AskUserQuestion(
+  question: "What workflows would you like to generate for this project?",
+  options: [
+    {label: "feature", description: "Plan, implement, test, review, commit"},
+    {label: "bugfix", description: "Investigate, fix, test, commit"},
+    {label: "deploy", description: "Build, test, deploy with approval gates"},
+    {label: "ci", description: "Lint, test, build pipeline"}
+  ],
+  multiSelect: true
+)
+```
 
-> What workflows would you like to generate? Common options:
-> - **feature** — Plan, implement, test, review, commit
-> - **bugfix** — Investigate, fix, test, commit
-> - **deploy** — Build, test, deploy with approval gates
-> - **ci** — Lint, test, build pipeline
-> - **release** — Version bump, test, tag, push
->
-> You can choose multiple (comma-separated), or describe a custom workflow.
+If the project has multiple stacks, follow up:
+```
+AskUserQuestion(
+  question: "This project has multiple stacks: <list>. Generate workflows covering all stacks, or target specific ones?",
+  options: [
+    {label: "All stacks", description: "Generate parallel steps for each stack"},
+    {label: "Pick stacks", description: "Choose which stacks to include"}
+  ]
+)
+```
 
-If the project has multiple stacks, also ask which stack(s) the workflows should target, or generate workflows that cover all detected stacks.
-
-## Step 3: Generate Workflows
+## Step 4: Generate Workflows
 
 For each requested workflow, generate a YAML file at `.claudekiq/workflows/<name>.yml`.
 
@@ -169,16 +189,16 @@ Convention-based custom types (e.g., `review`, `deploy`, `migrate`) are also sup
         max_visits: 5
     ```
 
-## Step 4: Validate
+## Step 5: Validate
 
 After writing each workflow, run:
-```bash
-cq workflows validate .claudekiq/workflows/<name>.yml
+```
+Bash(command: "cq workflows validate .claudekiq/workflows/<name>.yml")
 ```
 
 Fix any issues.
 
-## Step 5: Summary
+## Step 6: Summary
 
 Tell the user what was created and how to use it:
 - List the generated workflows with descriptions

@@ -51,6 +51,7 @@ cmd_todos() {
         [[ -n "$description" ]] && printf "       %s\n" "$description"
         printf "       run: %s\n" "$run_id"
       done; }
+    cq_hint "Use AskUserQuestion to present these pending actions to the user."
   fi
 }
 

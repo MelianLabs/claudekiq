@@ -195,6 +195,7 @@ _handle_gate() {
         cq_log_event "$run_dir" "gate_human" \
           "$(jq -cn --arg step "$step_id" '{step:$step}')"
         cq_info "$(cq_marker "gated") Waiting for human approval at step '${step_id}'"
+        cq_hint "Workflow gated at step '${step_id}'. Use AskUserQuestion to prompt the user for approval."
       fi
       ;;
     review)
@@ -234,6 +235,7 @@ _handle_review_failure() {
         "$(jq -cn --arg step "$step_id" --argjson visits "$visits" --argjson max "$max_visits" \
           '{step:$step, visits:$visits, max_visits:$max}')"
       cq_info "$(cq_marker "gated") Step '${step_id}' exceeded max visits — escalated to human"
+      cq_hint "Step exceeded max visits. Use AskUserQuestion to ask user: override or reject?"
     fi
   else
     _advance_run "$run_id" "$step_id" "fail"
@@ -258,6 +260,7 @@ _advance_run() {
     cq_log_event "$run_dir" "run_completed" '{}'
     cq_fire_hook "on_complete" "$run_dir"
     cq_info "$(cq_marker "passed") Workflow completed (run ${run_id})"
+    cq_hint "Workflow completed. Update the workflow Task to completed via TaskUpdate."
   else
     # Advance to next step
     local ts
@@ -275,6 +278,7 @@ _advance_run() {
 
     cq_log_event "$run_dir" "step_started" \
       "$(jq -cn --arg step "$next_step" '{step:$step}')"
+    cq_hint "Next step: '${next_step}'. Read status and dispatch."
   fi
 }
 
