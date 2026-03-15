@@ -131,6 +131,13 @@ cmd_workflows_validate() {
   dupes=$(jq -r '[.steps[].id] | group_by(.) | map(select(length > 1)) | .[0][0] // empty' <<< "$wf_json")
   [[ -n "$dupes" ]] && errors+=("Duplicate step ID: ${dupes}")
 
+  # Validate agent targets (check @target references exist)
+  local agent_warnings
+  agent_warnings=$(_validate_agent_targets_check "$wf_json")
+  while IFS= read -r warn; do
+    [[ -n "$warn" ]] && errors+=("$warn")
+  done <<< "$agent_warnings"
+
   if [[ ${#errors[@]} -gt 0 ]]; then
     if [[ "$CQ_JSON" == "true" ]]; then
       printf '%s\n' "${errors[@]}" | jq -Rcs 'split("\n") | map(select(. != "")) | {valid:false, errors:.}'
@@ -142,4 +149,44 @@ cmd_workflows_validate() {
   fi
 
   cq_json_out '{valid:true, errors:[]}' || echo "Valid: ${file}"
+}
+
+# Check agent targets and return warnings (non-fatal for validate)
+_validate_agent_targets_check() {
+  local wf_json="$1"
+  local targets
+  targets=$(jq -r '.steps[] | select(.type == "agent") | .target // "" | select(startswith("@")) | ltrimstr("@")' <<< "$wf_json" 2>/dev/null)
+  [[ -z "$targets" ]] && return 0
+
+  local settings_file="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
+  local available_agents=""
+  if [[ -f "$settings_file" ]]; then
+    available_agents=$(jq -r '.agents // [] | .[].name' "$settings_file" 2>/dev/null)
+  fi
+
+  local target
+  while IFS= read -r target; do
+    [[ -z "$target" ]] && continue
+    [[ -f "${CQ_PROJECT_ROOT}/.claude/agents/${target}.md" ]] && continue
+    if [[ -n "$available_agents" ]] && echo "$available_agents" | grep -qx "$target"; then
+      continue
+    fi
+    local mapped
+    mapped=$(cq_resolve_agent_target "$target")
+    if [[ "$mapped" != "$target" ]]; then
+      [[ -f "${CQ_PROJECT_ROOT}/.claude/agents/${mapped}.md" ]] && continue
+      if [[ -n "$available_agents" ]] && echo "$available_agents" | grep -qx "$mapped"; then
+        continue
+      fi
+    fi
+    echo "Agent '@${target}' referenced in workflow but not found (run 'cq scan' to discover agents)"
+  done <<< "$targets"
+}
+
+# Convenience alias: cq validate <workflow>
+cmd_validate() {
+  local name="${1:?Usage: cq validate <workflow>}"
+  local file
+  file=$(cq_find_workflow "$name") || cq_die "Workflow not found: ${name}"
+  cmd_workflows_validate "$file"
 }

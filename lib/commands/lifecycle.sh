@@ -130,9 +130,17 @@ cmd_start() {
   fi
 }
 
-# Validate that all @target agent references in agent steps exist
+# Validate that all @target agent references in agent steps exist.
+# Only validates when scan data is available (scanned_at is set in settings.json).
 _validate_agent_targets() {
   local wf_json="$1"
+
+  # Only validate if scan data exists (skip in fresh/unconfigured projects)
+  local settings_file="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
+  if [[ ! -f "$settings_file" ]]; then return 0; fi
+  local scanned_at
+  scanned_at=$(jq -r '.scanned_at // empty' "$settings_file" 2>/dev/null)
+  [[ -z "$scanned_at" ]] && return 0
 
   # Extract all agent step targets that start with @
   local targets
@@ -140,11 +148,8 @@ _validate_agent_targets() {
   [[ -z "$targets" ]] && return 0
 
   # Load available agents from scan results
-  local settings_file="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
-  local available_agents=""
-  if [[ -f "$settings_file" ]]; then
-    available_agents=$(jq -r '.agents // [] | .[].name' "$settings_file" 2>/dev/null)
-  fi
+  local available_agents
+  available_agents=$(jq -r '.agents // [] | .[].name' "$settings_file" 2>/dev/null)
 
   local target
   while IFS= read -r target; do
@@ -159,17 +164,16 @@ _validate_agent_targets() {
     local mapped
     mapped=$(cq_resolve_agent_target "$target")
     if [[ "$mapped" != "$target" ]]; then
-      # Mapping exists, check if mapped agent exists
       [[ -f "${CQ_PROJECT_ROOT}/.claude/agents/${mapped}.md" ]] && continue
       if [[ -n "$available_agents" ]] && echo "$available_agents" | grep -qx "$mapped"; then
         continue
       fi
     fi
-    # Not found
+    # Not found — warn but don't block (agent may be available at runtime)
     local avail_list
     avail_list=$(echo "$available_agents" | tr '\n' ', ' | sed 's/,$//')
     [[ -z "$avail_list" ]] && avail_list="(none found)"
-    cq_die "Agent '${target}' not found. Available agents: ${avail_list}. Run 'cq scan' to update."
+    cq_warn "Agent '${target}' not found. Available agents: ${avail_list}. Run 'cq scan' to update."
   done <<< "$targets"
 }
 
