@@ -62,9 +62,10 @@ This creates:
 - `.claudekiq/` — project directory (workflows, settings, runs)
 - `.claudekiq/workflows/` — where you put workflow YAML files
 - `.claude/skills/cq/SKILL.md` — the Claude Code runner skill
-- `.mcp.json` — MCP plugin config for Claude Code
 
-It also adds run data to `.gitignore` so workflow state doesn't pollute your repo.
+It also auto-scans for agents, skills, and plugins (`cq scan`), and adds run data to `.gitignore`.
+
+After init, run `/cq-setup` inside Claude Code to generate customized workflows based on your project's agents and stack.
 
 ### 2. Create a workflow
 
@@ -158,10 +159,13 @@ A workflow is a YAML file with **steps**. Each step has:
 ### Step Types
 
 - **`bash`** — Run a shell command. Pass on exit 0, fail otherwise.
-- **`agent`** — AI task. The `args_template` becomes the prompt; Claude does the work.
+- **`agent`** — AI task. Use `@agent-name` to target a specific agent, or leave empty for inline execution.
 - **`skill`** — Invoke a Claude Code skill (e.g., `/commit`, `/review`).
 - **`manual`** — Human action. Displays instructions and waits for approval.
 - **`subflow`** — Insert steps from another workflow inline.
+- **`for_each`** — Iterate over a list, executing a sub-step per item.
+- **`parallel`** — Run multiple sub-steps concurrently.
+- **`batch`** — Spawn isolated worker agents for each job in a list.
 
 ### Gates
 
@@ -198,11 +202,17 @@ Without explicit routing, steps execute in order.
 
 ### Context & Interpolation
 
-Workflows have a context object (key-value pairs). Use `{{variable}}` in targets and args to interpolate values:
+Workflows have a context object (key-value pairs). Use `{{expression}}` in targets and args to interpolate values. The interpolation engine uses jq, so you can access nested values:
 
 ```yaml
 target: "git checkout -b feature/{{branch_name}} main"
 args_template: "Implement: {{description}} using the {{stack}} framework"
+# Nested access:
+target: "echo {{config.timeout}}"
+# Array indexing:
+target: "deploy {{servers[0].host}}"
+# jq expressions:
+args_template: "Process {{items | length}} items"
 ```
 
 Context is populated from:
@@ -369,6 +379,17 @@ Meanwhile, `/cq status` tracked progress from another session:
 | `cq add-steps <run_id> --flow <workflow> --after <step_id>` | Insert steps from another workflow |
 | `cq set-next <run_id> <step_id>` | Jump to a specific step |
 
+### Iteration
+
+| Command | Description |
+|---------|-------------|
+| `cq for-each --over=<list> --var=<name> --command=<cmd>` | Iterate over a list, running a command per item |
+| `cq for-each <run_id> <step_id>` | Execute a for_each workflow step |
+| `cq parallel --steps=<json>` | Run multiple steps concurrently |
+| `cq parallel <run_id> <step_id>` | Execute a parallel workflow step |
+| `cq batch --workflow=<name> --jobs=<json>` | Create a batch worker session |
+| `cq batch <run_id> <step_id>` | Execute a batch workflow step |
+
 ### Templates
 
 | Command | Description |
@@ -376,6 +397,7 @@ Meanwhile, `/cq status` tracked progress from another session:
 | `cq workflows list` | List available workflows |
 | `cq workflows show <name>` | Show workflow definition |
 | `cq workflows validate <name>` | Validate workflow YAML |
+| `cq validate <name>` | Validate a workflow (shorthand) |
 
 ### Setup & Configuration
 
@@ -495,12 +517,11 @@ Project settings override global. You can set:
   runs/                    # Run state (gitignored)
   workers/                 # Worker session coordination (gitignored)
   plugins/                 # Custom step type handlers (bash scripts)
-  agent-mapping.json       # Agent name remapping (optional)
-
-.mcp.json                  # MCP plugin config (committed)
 .claude/skills/cq/         # Claude Code runner skill (committed)
   SKILL.md                 # Skill definition
 .claude/skills/cq-workers/ # Parallel workers skill (committed)
+  SKILL.md                 # Skill definition
+.claude/skills/cq-setup/   # Smart workflow generation skill (committed)
   SKILL.md                 # Skill definition
 ```
 
