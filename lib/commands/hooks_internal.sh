@@ -102,6 +102,68 @@ cmd__stage_context() {
   exit 0
 }
 
+# Safety check: read per-operation policy and exit accordingly
+# Called by hook commands: cq _safety-check <operation>
+# Reads optional context from stdin
+cmd__safety_check() {
+  local operation="${1:?Usage: cq _safety-check <operation>}"
+
+  # For git_checkout, also check for active runs
+  if [[ "$operation" == "git_checkout" ]]; then
+    local has_active=false
+    if ls "${CQ_PROJECT_ROOT}/.claudekiq/runs"/*/meta.json 2>/dev/null | head -1 | grep -q .; then
+      local f status
+      for f in "${CQ_PROJECT_ROOT}/.claudekiq/runs"/*/meta.json; do
+        status=$(jq -r '.status' "$f" 2>/dev/null)
+        if [[ "$status" == "running" || "$status" == "gated" ]]; then
+          has_active=true
+          break
+        fi
+      done
+    fi
+    # No active runs → always allow
+    [[ "$has_active" == "false" ]] && exit 0
+  fi
+
+  # For git_commit, delegate to pre-commit validate
+  if [[ "$operation" == "git_commit" ]]; then
+    cmd__pre_commit_validate "$@"
+    return $?
+  fi
+
+  local policy
+  policy=$(cq_safety_policy "$operation")
+
+  case "$policy" in
+    warn)
+      local messages
+      case "$operation" in
+        rm_claudekiq) messages="Warning: deleting .claudekiq directory — use cq cleanup instead" ;;
+        git_checkout) messages="Warning: git checkout/switch while cq workflows are running/gated." ;;
+        edit_run_files) messages="Warning: editing run files directly — use cq commands instead" ;;
+        *) messages="Warning: operation '${operation}' flagged by safety policy" ;;
+      esac
+      echo "$messages" >&2
+      exit 0
+      ;;
+    block)
+      local messages
+      case "$operation" in
+        rm_claudekiq) messages="Blocked: cannot delete .claudekiq directory — use cq cleanup instead" ;;
+        git_checkout) messages="Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first." ;;
+        edit_run_files) messages="Blocked: do not edit run files directly — use cq commands instead" ;;
+        *) messages="Blocked: operation '${operation}' blocked by safety policy" ;;
+      esac
+      echo "$messages" >&2
+      exit 2
+      ;;
+    *)
+      # Unknown policy value → allow
+      exit 0
+      ;;
+  esac
+}
+
 # Pre-commit validation: check if current workflow step allows commits
 # Called by PreToolUse[Bash] when git commit is detected
 # Reads hook input JSON from stdin

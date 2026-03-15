@@ -210,6 +210,97 @@ cmd_workflows_validate() {
     [[ -n "$warn" ]] && errors+=("$warn")
   done <<< "$agent_warnings"
 
+  # Validate extends field if present
+  local extends_name
+  extends_name=$(jq -r '.extends // empty' <<< "$wf_json")
+  if [[ -n "$extends_name" ]]; then
+    if ! cq_find_workflow "$extends_name" >/dev/null 2>&1; then
+      errors+=("Workflow extends '${extends_name}' but base workflow not found")
+    fi
+    # Check for circular extends
+    local chain="$extends_name"
+    local visited_extends=("$(jq -r '.name // empty' <<< "$wf_json")")
+    local current_extends="$extends_name"
+    while [[ -n "$current_extends" ]]; do
+      local ce
+      for ce in "${visited_extends[@]}"; do
+        if [[ "$ce" == "$current_extends" ]]; then
+          errors+=("Circular extends detected: ${chain}")
+          current_extends=""
+          break 2
+        fi
+      done
+      visited_extends+=("$current_extends")
+      local base_file
+      base_file=$(cq_find_workflow "$current_extends" 2>/dev/null) || break
+      local base_json
+      base_json=$(cq_yaml_to_json "$base_file" 2>/dev/null) || break
+      current_extends=$(jq -r '.extends // empty' <<< "$base_json")
+      [[ -n "$current_extends" ]] && chain="${chain} -> ${current_extends}"
+    done
+  fi
+
+  # Validate override IDs exist in base workflow
+  local override_keys
+  override_keys=$(jq -r '.override // {} | keys[]' <<< "$wf_json" 2>/dev/null)
+  if [[ -n "$override_keys" && -n "$extends_name" ]]; then
+    local base_file base_json base_step_ids
+    base_file=$(cq_find_workflow "$extends_name" 2>/dev/null)
+    if [[ -n "$base_file" ]]; then
+      base_json=$(cq_yaml_to_json "$base_file" 2>/dev/null)
+      if [[ -n "$base_json" ]]; then
+        base_step_ids=$(jq -r '.steps[].id' <<< "$base_json" 2>/dev/null)
+        local ok
+        while IFS= read -r ok; do
+          [[ -z "$ok" ]] && continue
+          if ! echo "$base_step_ids" | grep -qx "$ok"; then
+            cq_warn "Override step '${ok}' not found in base workflow '${extends_name}'"
+          fi
+        done <<< "$override_keys"
+      fi
+    fi
+  fi
+
+  # Validate remove IDs exist in base workflow
+  local remove_ids
+  remove_ids=$(jq -r '.remove // [] | .[]' <<< "$wf_json" 2>/dev/null)
+  if [[ -n "$remove_ids" && -n "$extends_name" ]]; then
+    local base_file base_json base_step_ids
+    base_file=$(cq_find_workflow "$extends_name" 2>/dev/null)
+    if [[ -n "$base_file" ]]; then
+      base_json=$(cq_yaml_to_json "$base_file" 2>/dev/null)
+      if [[ -n "$base_json" ]]; then
+        base_step_ids=$(jq -r '.steps[].id' <<< "$base_json" 2>/dev/null)
+        local ri
+        while IFS= read -r ri; do
+          [[ -z "$ri" ]] && continue
+          if ! echo "$base_step_ids" | grep -qx "$ri"; then
+            cq_warn "Remove step '${ri}' not found in base workflow '${extends_name}'"
+          fi
+        done <<< "$remove_ids"
+      fi
+    fi
+  fi
+
+  # Circular routing detection
+  local validation_warnings
+  validation_warnings=$(_validate_circular_routing "$wf_json")
+  while IFS= read -r w; do
+    [[ -n "$w" ]] && cq_warn "$w"
+  done <<< "$validation_warnings"
+
+  # Missing context variable detection
+  validation_warnings=$(_validate_missing_context_vars "$wf_json")
+  while IFS= read -r w; do
+    [[ -n "$w" ]] && cq_warn "$w"
+  done <<< "$validation_warnings"
+
+  # Unreachable step detection
+  validation_warnings=$(_validate_unreachable_steps "$wf_json")
+  while IFS= read -r w; do
+    [[ -n "$w" ]] && cq_warn "$w"
+  done <<< "$validation_warnings"
+
   if [[ ${#errors[@]} -gt 0 ]]; then
     if [[ "$CQ_JSON" == "true" ]]; then
       printf '%s\n' "${errors[@]}" | jq -Rcs 'split("\n") | map(select(. != "")) | {valid:false, errors:.}'
@@ -221,6 +312,196 @@ cmd_workflows_validate() {
   fi
 
   cq_json_out '{valid:true, errors:[]}' || echo "Valid: ${file}"
+}
+
+# Circular routing detection: find cycles that don't pass through a gate
+# Outputs warning lines to stdout
+_validate_circular_routing() {
+  local wf_json="$1"
+
+  # Build adjacency list from routing fields: src:dst:gate
+  local edges
+  edges=$(jq -r '
+    .steps[] |
+    .id as $id | .gate as $gate |
+    (
+      (if .on_pass then "\($id):\(.on_pass):\($gate // "auto")" else empty end),
+      (if .on_fail then "\($id):\(.on_fail):\($gate // "auto")" else empty end),
+      (if .on_timeout then "\($id):\(.on_timeout):\($gate // "auto")" else empty end),
+      (if .next then
+        if (.next | type) == "string" then "\($id):\(.next):\($gate // "auto")"
+        elif (.next | type) == "array" then
+          (.next[] | if .goto then "\($id):\(.goto):\($gate // "auto")" elif .default then "\($id):\(.default):\($gate // "auto")" else empty end)
+        else empty end
+      else empty end)
+    )
+  ' <<< "$wf_json" 2>/dev/null)
+
+  [[ -z "$edges" ]] && return 0
+
+  local step_ids
+  step_ids=$(jq -r '.steps[].id' <<< "$wf_json")
+
+  local step_id
+  while IFS= read -r step_id; do
+    [[ -z "$step_id" ]] && continue
+    local found_cycle=false passes_gate=false
+
+    # BFS to find if step_id can reach itself
+    local queue="$step_id" seen=""
+    while [[ -n "$queue" ]]; do
+      local current="${queue%% *}"
+      queue="${queue#"$current"}"
+      queue="${queue# }"
+
+      local succ
+      while IFS= read -r succ; do
+        [[ -z "$succ" ]] && continue
+        local src="${succ%%:*}"
+        local rest="${succ#*:}"
+        local dst="${rest%%:*}"
+        local gate="${rest#*:}"
+
+        [[ "$src" != "$current" ]] && continue
+
+        if [[ "$dst" == "$step_id" ]]; then
+          found_cycle=true
+          if [[ "$gate" == "review" || "$gate" == "human" ]]; then
+            passes_gate=true
+          fi
+          continue
+        fi
+
+        # Skip if already seen
+        case " $seen " in
+          *" $dst "*) continue ;;
+        esac
+        seen="$seen $dst"
+        if [[ "$gate" == "review" || "$gate" == "human" ]]; then
+          passes_gate=true
+        fi
+        queue="$queue $dst"
+      done <<< "$edges"
+    done
+
+    if [[ "$found_cycle" == "true" && "$passes_gate" == "false" ]]; then
+      echo "Circular routing detected at step '${step_id}' — may cause infinite loop (no gate in cycle)"
+    fi
+  done <<< "$step_ids"
+}
+
+# Missing context variable detection: find {{var}} references not in defaults/params
+# Outputs warning lines to stdout
+_validate_missing_context_vars() {
+  local wf_json="$1"
+
+  local refs
+  refs=$(jq -r '
+    .steps[] | select(.type == "bash") | .target // "" |
+    [scan("\\{\\{([^}]+)\\}\\}") | .[0]] | .[]
+  ' <<< "$wf_json" 2>/dev/null)
+  [[ -z "$refs" ]] && return 0
+
+  local declared
+  declared=$(jq -r '
+    ((.defaults // {} | keys[]),
+     (.params // {} | keys[]))
+  ' <<< "$wf_json" 2>/dev/null)
+
+  local ref
+  while IFS= read -r ref; do
+    [[ -z "$ref" ]] && continue
+    ref=$(echo "$ref" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [[ "$ref" == *"|"* || "$ref" == *"["* ]] && continue
+    local top_key="${ref%%.*}"
+    if [[ -n "$declared" ]] && echo "$declared" | grep -qx "$top_key"; then
+      continue
+    fi
+    echo "Context variable '{{${ref}}}' referenced in bash step but not declared in defaults or params (may be set at runtime)"
+  done <<< "$refs"
+}
+
+# Unreachable step detection: find steps not reachable from the first step
+# Outputs warning lines to stdout
+_validate_unreachable_steps() {
+  local wf_json="$1"
+
+  local step_ids
+  step_ids=$(jq -r '.steps[].id' <<< "$wf_json")
+  [[ -z "$step_ids" ]] && return 0
+
+  local first_step
+  first_step=$(jq -r '.steps[0].id' <<< "$wf_json")
+
+  # Build reachable set via BFS from first step
+  local reachable="$first_step"
+  local queue="$first_step"
+
+  while [[ -n "$queue" ]]; do
+    local current="${queue%% *}"
+    queue="${queue#"$current"}"
+    queue="${queue# }"
+
+    # Get successors via jq: explicit routes + implicit next (only if no explicit routing)
+    local successors
+    successors=$(jq -r --arg id "$current" '
+      .steps as $steps |
+      ($steps | to_entries[] | select(.value.id == $id) | .key) as $idx |
+      $steps[$idx] as $step |
+      (
+        ($step.on_pass // empty),
+        ($step.on_fail // empty),
+        ($step.on_timeout // empty),
+        (if $step.next then
+          if ($step.next | type) == "string" then $step.next
+          elif ($step.next | type) == "array" then
+            ($step.next[] | (.goto // empty), (.default // empty))
+          else empty end
+        else empty end)
+      ) as $explicit |
+      # Collect explicit routes
+      [$explicit] | if length > 0 then .[]
+      else
+        # Only add implicit next if no explicit routes
+        if ($idx + 1) < ($steps | length) then $steps[$idx + 1].id else empty end
+      end
+    ' <<< "$wf_json" 2>/dev/null)
+    # Fallback if jq above is too complex: try simpler approach
+    if [[ -z "$successors" ]]; then
+      successors=$(jq -r --arg id "$current" '
+        .steps as $steps |
+        ($steps | to_entries[] | select(.value.id == $id)) as $entry |
+        $entry.value as $step | $entry.key as $idx |
+        [($step.on_pass // empty), ($step.on_fail // empty), ($step.on_timeout // empty),
+         (if $step.next then
+           if ($step.next | type) == "string" then $step.next
+           elif ($step.next | type) == "array" then ($step.next[] | (.goto // empty), (.default // empty))
+           else empty end
+         else empty end)] |
+        if length > 0 then .[] else (if ($idx + 1) < ($steps | length) then $steps[$idx + 1].id else empty end) end
+      ' <<< "$wf_json" 2>/dev/null)
+    fi
+
+    local succ
+    while IFS= read -r succ; do
+      [[ -z "$succ" ]] && continue
+      case " $reachable " in
+        *" $succ "*) continue ;;
+      esac
+      reachable="$reachable $succ"
+      queue="$queue $succ"
+    done <<< "$successors"
+  done
+
+  # Check which steps are unreachable
+  local sid
+  while IFS= read -r sid; do
+    [[ -z "$sid" ]] && continue
+    case " $reachable " in
+      *" $sid "*) ;;
+      *) echo "Step '${sid}' is unreachable from the first step" ;;
+    esac
+  done <<< "$step_ids"
 }
 
 # Check agent targets and return warnings (non-fatal for validate)

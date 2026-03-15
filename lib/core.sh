@@ -438,6 +438,39 @@ cq_fire_hook() {
   fi
 }
 
+# --- Safety policy ---
+
+# Read the safety policy for a specific operation.
+# Returns "block" or "warn". Handles both string and map formats.
+# Usage: policy=$(cq_safety_policy "git_commit")
+cq_safety_policy() {
+  local operation="$1"
+  local settings_file="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
+  local safety_val
+
+  if [[ -f "$settings_file" ]]; then
+    safety_val=$(jq -r '.safety // "strict"' "$settings_file" 2>/dev/null || echo "strict")
+  else
+    safety_val="strict"
+  fi
+
+  # If safety is a string (backward compat), expand to default policy
+  case "$safety_val" in
+    strict)  echo "block"; return ;;
+    relaxed) echo "warn"; return ;;
+  esac
+
+  # If safety is an object, look up the specific operation
+  local policy
+  policy=$(jq -r --arg op "$operation" '.safety[$op] // empty' "$settings_file" 2>/dev/null)
+  if [[ -n "$policy" ]]; then
+    echo "$policy"
+  else
+    # Default to block for unknown operations
+    echo "block"
+  fi
+}
+
 # --- Platform detection ---
 
 cq_detect_platform() {

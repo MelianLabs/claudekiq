@@ -89,10 +89,20 @@ _install_plugin_json() {
   local cq_home="${HOME}/.cq"
   local plugin_dir="${project_dir}/.claude-plugin"
   mkdir -p "$plugin_dir"
-  jq -cn --arg home "$cq_home" '{
-    name:"claudekiq", version:"3.1.3",
+
+  # Preserve user-added skills from existing plugin.json
+  local user_skills="[]"
+  if [[ -f "${plugin_dir}/plugin.json" ]]; then
+    user_skills=$(jq -r --arg home "$cq_home" '
+      [.skills // [] | .[] | select(startswith($home + "/skills/") | not)]
+    ' "${plugin_dir}/plugin.json" 2>/dev/null || echo "[]")
+  fi
+
+  # Build new plugin.json with CQ_VERSION and merge user skills
+  jq -cn --arg home "$cq_home" --arg ver "$CQ_VERSION" --argjson user_skills "$user_skills" '{
+    name:"claudekiq", version:$ver,
     description:"Filesystem-backed workflow engine for Claude Code",
-    skills:[($home+"/skills/cq"),($home+"/skills/cq-agent"),($home+"/skills/cq-setup")]
+    skills:([($home+"/skills/cq"),($home+"/skills/cq-agent"),($home+"/skills/cq-setup")] + $user_skills)
   }' > "${plugin_dir}/plugin.json"
 }
 
@@ -170,7 +180,7 @@ _hooks_install() {
       "hooks": [
         {
           "type": "command",
-          "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: deleting .claudekiq directory — use cq cleanup instead\" >&2; exit 0; else echo \"Blocked: cannot delete .claudekiq directory — use cq cleanup instead\" >&2; exit 2; fi;; *\"git checkout\"*|*\"git switch\"*) if ls .claudekiq/runs/*/meta.json 2>/dev/null | head -1 | grep -q .; then for f in .claudekiq/runs/*/meta.json; do status=$(jq -r .status \"$f\" 2>/dev/null); if [ \"$status\" = \"running\" ] || [ \"$status\" = \"gated\" ]; then if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: git checkout/switch while cq workflows are running/gated.\" >&2; exit 0; else echo \"Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first.\" >&2; exit 2; fi; fi; done; fi;; *\"git commit\"*) echo \"$input\" | cq _pre-commit-validate 2>&1; exit $?;; *\"Edit\"*|*\"Write\"*) :;; esac; exit 0'"
+          "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); rc=0; case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) cq _safety-check rm_claudekiq; rc=$?;; *\"git checkout\"*|*\"git switch\"*) cq _safety-check git_checkout; rc=$?;; *\"git commit\"*) echo \"$input\" | cq _safety-check git_commit; rc=$?;; esac; exit $rc'"
         }
       ]
     },
@@ -179,7 +189,7 @@ _hooks_install() {
       "hooks": [
         {
           "type": "command",
-          "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$path\" in */.claudekiq/runs/*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: editing run files directly — use cq commands instead\" >&2; exit 0; else echo \"Blocked: do not edit run files directly — use cq commands instead\" >&2; exit 2; fi;; esac; exit 0'"
+          "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); rc=0; case \"$path\" in */.claudekiq/runs/*) cq _safety-check edit_run_files; rc=$?;; esac; exit $rc'"
         }
       ]
     },
@@ -188,7 +198,7 @@ _hooks_install() {
       "hooks": [
         {
           "type": "command",
-          "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); safety=$(jq -r \".safety // \\\"strict\\\"\" .claudekiq/settings.json 2>/dev/null || echo \"strict\"); case \"$path\" in */.claudekiq/runs/*) if [ \"$safety\" = \"relaxed\" ]; then echo \"Warning: writing to run files directly — use cq commands instead\" >&2; exit 0; else echo \"Blocked: do not write to run files directly — use cq commands instead\" >&2; exit 2; fi;; esac; exit 0'"
+          "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); rc=0; case \"$path\" in */.claudekiq/runs/*) cq _safety-check edit_run_files; rc=$?;; esac; exit $rc'"
         }
       ]
     }

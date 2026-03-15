@@ -26,8 +26,34 @@ teardown() {
   "$CQ" init >/dev/null
   [ -f .claude-plugin/plugin.json ]
   jq -e '.name == "claudekiq"' .claude-plugin/plugin.json
-  jq -e '.version == "3.1.3"' .claude-plugin/plugin.json
   jq -e '.skills | length == 3' .claude-plugin/plugin.json
+}
+
+@test "plugin.json version matches CQ_VERSION" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  local plugin_ver cq_ver
+  plugin_ver=$(jq -r '.version' .claude-plugin/plugin.json)
+  cq_ver=$("$CQ" --json version | jq -r '.version')
+  [ "$plugin_ver" = "$cq_ver" ]
+}
+
+@test "re-init preserves user-added plugin skills" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  # Add a user skill to plugin.json
+  jq '.skills += ["/custom/my-skill"]' .claude-plugin/plugin.json > .claude-plugin/plugin.json.tmp
+  mv .claude-plugin/plugin.json.tmp .claude-plugin/plugin.json
+  local count_before
+  count_before=$(jq '.skills | length' .claude-plugin/plugin.json)
+  [ "$count_before" -eq 4 ]
+  # Re-init
+  "$CQ" init >/dev/null
+  # User skill should be preserved
+  jq -e '.skills | any(. == "/custom/my-skill")' .claude-plugin/plugin.json
+  local count_after
+  count_after=$(jq '.skills | length' .claude-plugin/plugin.json)
+  [ "$count_after" -eq 4 ]
 }
 
 @test "init does not create .claude/skills" {
@@ -144,11 +170,9 @@ teardown() {
 @test "hooks with safety=strict block operations" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null
-  # Default is strict — the Bash hook should exit 2 for rm -rf .claudekiq
-  local hook_cmd
-  hook_cmd=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' .claude/settings.json)
-  # Simulate the hook with a matching command
-  result=$(echo '{"tool_input":{"command":"rm -rf .claudekiq"}}' | bash -c "$hook_cmd" 2>&1) && exit_code=0 || exit_code=$?
+  # Default is strict — the _safety-check command should exit 2
+  local exit_code=0
+  "$CQ" _safety-check rm_claudekiq 2>/dev/null || exit_code=$?
   [ "$exit_code" -eq 2 ]
 }
 
@@ -158,11 +182,8 @@ teardown() {
   # Set safety to relaxed
   jq '. + {"safety":"relaxed"}' .claudekiq/settings.json > .claudekiq/settings.json.tmp
   mv .claudekiq/settings.json.tmp .claudekiq/settings.json
-  # Reinstall hooks
-  "$CQ" hooks install >/dev/null
-  local hook_cmd
-  hook_cmd=$(jq -r '.hooks.PreToolUse[] | select(.matcher == "Bash") | .hooks[0].command' .claude/settings.json)
-  result=$(echo '{"tool_input":{"command":"rm -rf .claudekiq"}}' | bash -c "$hook_cmd" 2>&1) && exit_code=0 || exit_code=$?
+  local exit_code=0
+  "$CQ" _safety-check rm_claudekiq 2>/dev/null || exit_code=$?
   [ "$exit_code" -eq 0 ]
 }
 

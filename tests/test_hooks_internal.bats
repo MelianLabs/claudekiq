@@ -199,6 +199,60 @@ teardown() {
   [[ "$files_count" -eq 2 ]]
 }
 
+# --- _safety-check tests ---
+
+@test "_safety-check blocks rm_claudekiq in strict mode" {
+  jq '.safety = "strict"' "$TEST_DIR/.claudekiq/settings.json" > "$TEST_DIR/.claudekiq/settings.json.tmp"
+  mv "$TEST_DIR/.claudekiq/settings.json.tmp" "$TEST_DIR/.claudekiq/settings.json"
+
+  local exit_code=0
+  "$CQ" _safety-check rm_claudekiq 2>/dev/null || exit_code=$?
+  [ "$exit_code" -eq 2 ]
+}
+
+@test "_safety-check warns rm_claudekiq in relaxed mode" {
+  jq '.safety = "relaxed"' "$TEST_DIR/.claudekiq/settings.json" > "$TEST_DIR/.claudekiq/settings.json.tmp"
+  mv "$TEST_DIR/.claudekiq/settings.json.tmp" "$TEST_DIR/.claudekiq/settings.json"
+
+  local exit_code=0
+  "$CQ" _safety-check rm_claudekiq 2>/dev/null || exit_code=$?
+  [ "$exit_code" -eq 0 ]
+}
+
+@test "_safety-check respects per-operation policy map" {
+  # Set safety as a map with rm_claudekiq=warn but edit_run_files=block
+  jq '.safety = {"rm_claudekiq":"warn","edit_run_files":"block","git_checkout":"block","git_commit":"block"}' \
+    "$TEST_DIR/.claudekiq/settings.json" > "$TEST_DIR/.claudekiq/settings.json.tmp"
+  mv "$TEST_DIR/.claudekiq/settings.json.tmp" "$TEST_DIR/.claudekiq/settings.json"
+
+  local exit_code=0
+  "$CQ" _safety-check rm_claudekiq 2>/dev/null || exit_code=$?
+  [ "$exit_code" -eq 0 ]
+
+  exit_code=0
+  "$CQ" _safety-check edit_run_files 2>/dev/null || exit_code=$?
+  [ "$exit_code" -eq 2 ]
+}
+
+@test "_safety-check git_checkout allows when no active runs" {
+  # No runs are active
+  local exit_code=0
+  "$CQ" _safety-check git_checkout 2>/dev/null || exit_code=$?
+  [ "$exit_code" -eq 0 ]
+}
+
+@test "_safety-check git_checkout blocks when runs are active" {
+  local run_id
+  run_id=$(start_minimal)
+
+  jq '.safety = "strict"' "$TEST_DIR/.claudekiq/settings.json" > "$TEST_DIR/.claudekiq/settings.json.tmp"
+  mv "$TEST_DIR/.claudekiq/settings.json.tmp" "$TEST_DIR/.claudekiq/settings.json"
+
+  local exit_code=0
+  "$CQ" _safety-check git_checkout 2>/dev/null || exit_code=$?
+  [ "$exit_code" -eq 2 ]
+}
+
 @test "step state initializes with empty files array" {
   local run_id
   run_id=$(start_minimal)

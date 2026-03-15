@@ -1,0 +1,17 @@
+name: circular-routing
+description: Workflow with circular routing (no gate)
+
+steps:
+  - id: step-a
+    name: Step A
+    type: bash
+    target: "echo a"
+    gate: auto
+    on_fail: step-b
+
+  - id: step-b
+    name: Step B
+    type: bash
+    target: "echo b"
+    gate: auto
+    on_fail: step-a

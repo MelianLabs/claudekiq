@@ -35,6 +35,9 @@ cmd_start() {
   local wf_json
   wf_json=$(cq_yaml_to_json "$wf_file")
 
+  # Resolve workflow inheritance (extends)
+  wf_json=$(cq_resolve_workflow_inheritance "$wf_json")
+
   # Validate agent targets
   _validate_agent_targets "$wf_json"
 

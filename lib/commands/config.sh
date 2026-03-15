@@ -36,11 +36,25 @@ cmd_config() {
 
       local config
       config=$(cat "$config_file")
-      # Try to parse value as JSON, fall back to string
-      if jq '.' <<< "$value" >/dev/null 2>&1; then
-        config=$(jq --arg k "$key" --argjson v "$value" '.[$k] = $v' <<< "$config")
+
+      # Support dot-notation for nested keys (e.g., safety.git_commit)
+      if [[ "$key" == *.* ]]; then
+        local path
+        path=$(echo "$key" | sed 's/\./"."/g')
+        path=".\"${path}\""
+        # Try to parse value as JSON, fall back to string
+        if jq '.' <<< "$value" >/dev/null 2>&1; then
+          config=$(jq --argjson v "$value" "${path} = \$v" <<< "$config")
+        else
+          config=$(jq --arg v "$value" "${path} = \$v" <<< "$config")
+        fi
       else
-        config=$(jq --arg k "$key" --arg v "$value" '.[$k] = $v' <<< "$config")
+        # Try to parse value as JSON, fall back to string
+        if jq '.' <<< "$value" >/dev/null 2>&1; then
+          config=$(jq --arg k "$key" --argjson v "$value" '.[$k] = $v' <<< "$config")
+        else
+          config=$(jq --arg k "$key" --arg v "$value" '.[$k] = $v' <<< "$config")
+        fi
       fi
       jq '.' <<< "$config" > "$config_file"
 

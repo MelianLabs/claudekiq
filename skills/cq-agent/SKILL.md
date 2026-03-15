@@ -7,6 +7,9 @@ allowed-tools: Bash, Read, Agent, Skill, CronCreate, CronDelete
 
 # Claudekiq Agent Step Executor
 
+## Prerequisites
+If any required tool (Agent, Skill, etc.) is unavailable, report the error clearly and suggest running via CLI instead.
+
 You handle a single agent step within a cq workflow. You are invoked by the `/cq` runner to execute agent-type steps autonomously.
 
 ## Arguments
@@ -83,6 +86,7 @@ Invoke the Agent tool:
 - `model`: from step definition, or project default from `jq -r '.default_model // "opus"' .claudekiq/settings.json`
 - `prompt`: assembled prompt from step 2
 - `run_in_background`: true if `background: true` or `timeout` is set
+- `isolation`: from step definition (e.g., `isolation: worktree`). If set, pass to Agent tool for isolated execution.
 
 ## Step 7: Handle Timeout
 

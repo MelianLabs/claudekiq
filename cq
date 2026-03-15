@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-export CQ_VERSION="3.1.5"
+export CQ_VERSION="3.2.0"
 
 # --- Resolve script location and source libs ---
 
@@ -153,6 +153,7 @@ case "$COMMAND" in
   _stage-context)       cmd__stage_context "$@" ;;
   _pre-commit-validate) cmd__pre_commit_validate "$@" ;;
   _capture-output)      cmd__capture_output "$@" ;;
+  _safety-check)        cmd__safety_check "$@" ;;
 
   *)
     echo "cq: unknown command '${COMMAND}'. Run 'cq help' for usage." >&2

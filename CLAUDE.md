@@ -71,7 +71,7 @@ All run state lives in `.claudekiq/runs/<run_id>/` (gitignored):
 
 `cq init` creates only:
 - `.claudekiq/` directory structure (workflows, runs, settings.json)
-- `.claude-plugin/plugin.json` pointing to `~/.cq/skills/`
+- `.claude-plugin/plugin.json` pointing to `~/.cq/skills/` (version auto-synced from `$CQ_VERSION`, user-added skills preserved on re-init)
 - `.gitignore` entries
 
 Hooks are auto-installed into `.claude/settings.json`. Skills are served via the `.claude-plugin/plugin.json` plugin system from `~/.cq/skills/`.
@@ -114,13 +114,47 @@ Custom step types resolve via `cq_resolve_step_type()` in `lib/core.sh`:
 
 ### Safety Configuration
 
-The `safety` config key controls hook behavior:
+The `safety` config key controls hook behavior. Supports both simple string and per-operation policy map:
+
+**Simple (backward-compatible):**
 - `"strict"` (default) — hooks block dangerous operations (exit 2)
 - `"relaxed"` — hooks warn but allow operations (exit 0)
 
-Set via: `cq config set safety relaxed`
+**Per-operation policy map:**
+```json
+{
+  "safety": {
+    "git_commit": "block",
+    "git_checkout": "block",
+    "rm_claudekiq": "block",
+    "edit_run_files": "warn"
+  }
+}
+```
+
+Set via: `cq config set safety relaxed` or `cq config set safety.git_commit warn`
+
+Safety checks are centralized in `cq _safety-check <operation>` (called by hooks).
 
 For parallel batch processing, use Claude Code's built-in `/batch` skill.
+
+### Workflow Inheritance (`extends`)
+
+Workflows can inherit from a base workflow using `extends: <base-name>`:
+- `steps` from child are appended after base steps
+- `override` map merges fields into matching base step IDs
+- `remove` list filters out base steps by ID
+- `defaults` and `params` are merged (child overrides base)
+- Resolved in `cq_resolve_workflow_inheritance()` in `lib/storage.sh`
+- Validated for circular extends, nonexistent base, invalid override/remove IDs
+
+### Enhanced Validation (`cq workflows validate`)
+
+Beyond basic schema checks, validation detects:
+- **Circular routing** — cycles without gates (infinite loop risk); gated cycles allowed
+- **Missing context variables** — `{{var}}` in bash steps not declared in defaults/params
+- **Unreachable steps** — steps not reachable from the first step via any route
+- **Extends validation** — base exists, no circular extends, valid override/remove IDs
 
 ## Git Safety
 

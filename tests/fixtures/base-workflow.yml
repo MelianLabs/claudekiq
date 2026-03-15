@@ -1,0 +1,24 @@
+name: base-workflow
+description: Base workflow for inheritance testing
+
+defaults:
+  mode: default
+
+steps:
+  - id: lint
+    name: Lint Code
+    type: bash
+    target: "echo lint"
+    gate: auto
+
+  - id: run-tests
+    name: Run Tests
+    type: bash
+    target: "echo test"
+    gate: auto
+
+  - id: commit
+    name: Commit Changes
+    type: bash
+    target: "echo commit"
+    gate: human

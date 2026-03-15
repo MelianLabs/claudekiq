@@ -301,6 +301,95 @@ cq_copy_outputs_back() {
   fi
 }
 
+# --- Workflow inheritance ---
+
+# Resolve workflow inheritance (extends).
+# Takes a workflow JSON and returns the fully resolved workflow JSON.
+# Usage: resolved=$(cq_resolve_workflow_inheritance "$wf_json")
+cq_resolve_workflow_inheritance() {
+  local wf_json="$1"
+
+  local extends_name
+  extends_name=$(jq -r '.extends // empty' <<< "$wf_json")
+  [[ -z "$extends_name" ]] && { echo "$wf_json"; return 0; }
+
+  # Find and load base workflow
+  local base_file
+  base_file=$(cq_find_workflow "$extends_name") || {
+    cq_warn "Base workflow '${extends_name}' not found for extends"
+    echo "$wf_json"
+    return 0
+  }
+
+  local base_json
+  base_json=$(cq_yaml_to_json "$base_file")
+
+  # Recursively resolve base workflow if it also extends
+  base_json=$(cq_resolve_workflow_inheritance "$base_json")
+
+  # Start with base steps, defaults, params
+  local base_steps base_defaults base_params
+  base_steps=$(jq '.steps // []' <<< "$base_json")
+  base_defaults=$(jq '.defaults // {}' <<< "$base_json")
+  base_params=$(jq '.params // null' <<< "$base_json")
+
+  # Apply remove list: filter out steps with those IDs
+  local remove_list
+  remove_list=$(jq -c '.remove // []' <<< "$wf_json")
+  if [[ "$remove_list" != "[]" ]]; then
+    base_steps=$(jq --argjson remove "$remove_list" '
+      [.[] | select(.id as $id | $remove | index($id) | not)]
+    ' <<< "$base_steps")
+  fi
+
+  # Apply override map: merge fields into matching step IDs
+  local override_map
+  override_map=$(jq -c '.override // {}' <<< "$wf_json")
+  if [[ "$override_map" != "{}" ]]; then
+    base_steps=$(jq --argjson overrides "$override_map" '
+      [.[] | . as $step |
+        if $overrides[$step.id] then ($step * $overrides[$step.id])
+        else $step end]
+    ' <<< "$base_steps")
+  fi
+
+  # Append new steps from child workflow
+  local child_steps
+  child_steps=$(jq '.steps // []' <<< "$wf_json")
+  if [[ "$(jq 'length' <<< "$child_steps")" -gt 0 ]]; then
+    base_steps=$(jq --argjson child "$child_steps" '. + $child' <<< "$base_steps")
+  fi
+
+  # Merge defaults (child overrides base)
+  local child_defaults
+  child_defaults=$(jq '.defaults // {}' <<< "$wf_json")
+  local merged_defaults
+  merged_defaults=$(jq -n --argjson base "$base_defaults" --argjson child "$child_defaults" '$base * $child')
+
+  # Merge params (child overrides base)
+  local child_params
+  child_params=$(jq '.params // null' <<< "$wf_json")
+  local merged_params
+  if [[ "$child_params" != "null" && "$base_params" != "null" ]]; then
+    merged_params=$(jq -n --argjson base "$base_params" --argjson child "$child_params" '$base * $child')
+  elif [[ "$child_params" != "null" ]]; then
+    merged_params="$child_params"
+  else
+    merged_params="$base_params"
+  fi
+
+  # Build resolved workflow: child metadata with resolved steps/defaults/params
+  local resolved
+  resolved=$(jq --argjson steps "$base_steps" --argjson defaults "$merged_defaults" --argjson params "$merged_params" '
+    del(.extends, .override, .remove) |
+    .steps = $steps |
+    .defaults = $defaults |
+    (if $params != null then .params = $params else . end)
+  ' <<< "$wf_json")
+
+  echo "$resolved"
+}
+
 # --- Run listing ---
 
 cq_run_ids() {

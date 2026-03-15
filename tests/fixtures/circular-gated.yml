@@ -1,0 +1,18 @@
+name: circular-gated
+description: Workflow with circular routing through review gate (intentional)
+
+steps:
+  - id: run-tests
+    name: Run Tests
+    type: bash
+    target: "echo tests"
+    gate: review
+    max_visits: 3
+    on_fail: fix
+
+  - id: fix
+    name: Fix Issues
+    type: bash
+    target: "echo fix"
+    gate: auto
+    next: run-tests
