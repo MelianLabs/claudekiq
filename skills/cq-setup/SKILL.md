@@ -1,6 +1,6 @@
 ---
-name: cq-init
-description: "Smart project initialization — scans agents/skills and generates customized workflows based on your project. Use /cq-init after cq init."
+name: cq-setup
+description: "Smart project setup — scans agents/skills and generates customized workflows based on your project. Use /cq-setup after cq init."
 allowed-tools: Bash, Read, Glob, Grep, Write, AskUserQuestion
 ---
 

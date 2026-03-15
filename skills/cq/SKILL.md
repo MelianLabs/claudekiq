@@ -187,8 +187,9 @@ Use the **Agent tool** to spawn a specialized agent:
 1. **Determine subagent_type** from `target`:
    - If `target` is empty or doesn't start with `@`, execute inline as before (backward compat): do the work described in args_template yourself
    - Strip the `@` prefix (e.g., `@code-review` → `code-review`)
-   - Check for agent mapping: run `cq config get agent-mapping.<stripped_name>` or read `.claudekiq/agent-mapping.json` directly. If a mapping exists, use the mapped value as `subagent_type` (e.g., `code-review` → `code-reviewer`)
-   - If no mapping found, use the stripped name directly as `subagent_type` — Claude Code resolves it against `.claude/agents/<name>.md` definitions. If no matching agent exists, it falls back to `general-purpose`.
+   - Check for agent mapping in `.claudekiq/settings.json` under the `agent_mappings` key: `jq -r '.agent_mappings["<stripped_name>"] // empty' .claudekiq/settings.json`. If a mapping exists, use the mapped value as `subagent_type`
+   - If no mapping found, use the stripped name directly as `subagent_type` — Claude Code resolves it against `.claude/agents/<name>.md` definitions
+   - **IMPORTANT**: If the agent name is not found in scan results (`.claudekiq/settings.json .agents[].name`) AND no `.claude/agents/<name>.md` file exists → **fail the step** with error: `"Agent '<name>' not found. Define it at .claude/agents/<name>.md or update agent_mappings in settings.json"`. Do NOT silently fall back to general-purpose.
 
 2. **Set up heartbeat cron** (for non-background steps):
    - Write initial heartbeat: `cq heartbeat <run_id>`
@@ -257,6 +258,14 @@ Then mark the current step as pass and continue.
 #### `for_each`
 Iterate over a delimited list, executing a sub-step for each item:
 
+**For bash sub-steps**, use the CLI command:
+```bash
+cq for-each <run_id> <step_id> --json
+```
+This handles splitting, iteration, context updates, and returns a JSON result with per-item outcomes. Mark the step done based on the aggregate outcome.
+
+**For agent/skill sub-steps**, iterate manually:
+
 1. Read fields:
    - `over` (interpolated) — the list string (e.g., `"rails,webpack,marketplace"`)
    - `delimiter` (default `","`) — split character
@@ -268,9 +277,8 @@ Iterate over a delimited list, executing a sub-step for each item:
 
 3. For each item (up to `max_iterations`):
    a. Set the context variable: `cq ctx set <run_id> <item_var> <item>`
-   b. Determine how to execute the sub-step based on its `type`:
+   b. Execute the sub-step:
       - If `agent`: use the Agent tool (same rules as the `agent` type above)
-      - If `bash`: use the Bash tool
       - If `skill`: use the Skill tool
    c. Track progress: "for_each 2/3: processing webpack"
    d. If sub-step fails and this for_each has no `on_fail`, stop iteration
@@ -279,7 +287,15 @@ Iterate over a delimited list, executing a sub-step for each item:
 5. Mark done: `cq step-done <run_id> <for_each_step_id> pass|fail`
 
 #### `parallel`
-Execute multiple sub-steps concurrently using the Agent tool:
+Execute multiple sub-steps concurrently:
+
+**For bash sub-steps**, use the CLI command:
+```bash
+cq parallel <run_id> <step_id> --json
+```
+This runs all bash children concurrently and returns aggregate results.
+
+**For agent/skill sub-steps**, use the Agent tool directly:
 
 1. Read `steps` array and `fail_strategy` (default: `wait_all`)
 2. For EACH child step, invoke the Agent tool in a SINGLE message:
@@ -302,13 +318,15 @@ Execute multiple sub-steps concurrently using the Agent tool:
 
 #### `batch`
 Spawn multiple isolated worker agents, each processing one item from a list:
-- Read `jobs_from` (interpolated) — a JSON array in context, or a context key containing a JSON array
-- Read `worker_prompt` (interpolated per item) — the prompt template for each worker. Use `{{item.field}}` to reference job fields
-- Read `max_workers` (default `5`) — maximum concurrent workers
-- Invoke the `/cq-workers` skill internally:
-  1. Transform `jobs_from` into the `--jobs` JSON format expected by `/cq-workers`
-  2. For each job item, interpolate the `worker_prompt` as the task description
-  3. Use the Skill tool: `skill: "cq-workers"`, `args: "<workflow> --jobs='[...]'"`
+
+**Use the CLI command to create a worker session**:
+```bash
+cq batch <run_id> <step_id> --json
+```
+This creates a worker session and returns the `session_id`. Then invoke the `/cq-workers` skill:
+
+- Use the Skill tool: `skill: "cq-workers"`, `args: "<workflow> --jobs='[...]'"`
+- The workers skill handles spawning, monitoring, and gate escalation
 - Outcome: `pass` if all workers complete successfully, `fail` if any worker fails
 - Worker results are aggregated into the context under the `outputs` key
 

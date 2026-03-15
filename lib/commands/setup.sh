@@ -88,7 +88,7 @@ cmd_init() {
 
   cq_json_out --arg dir "$project_dir" '{status:"initialized", directory:$dir}' || {
     cq_info "Initialized .claudekiq/ in ${project_dir}"
-    cq_info "Run /cq-init to generate customized workflows based on your project's agents and skills."
+    cq_info "Run /cq-setup to generate customized workflows based on your project's agents and skills."
   }
 }
 
@@ -128,17 +128,17 @@ _install_workers_skill() {
 
 _install_init_skill() {
   local project_dir="$1"
-  local skill_dir="${project_dir}/.claude/skills/cq-init"
+  local skill_dir="${project_dir}/.claude/skills/cq-setup"
   mkdir -p "$skill_dir"
 
-  local src="${CQ_SCRIPT_DIR}/skills/cq-init/SKILL.md"
-  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq-init/SKILL.md"
+  local src="${CQ_SCRIPT_DIR}/skills/cq-setup/SKILL.md"
+  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq-setup/SKILL.md"
   if [[ -f "$src" ]]; then
     cp "$src" "${skill_dir}/SKILL.md"
     return
   fi
 
-  # cq-init is optional — don't die if not found
+  # cq-setup is optional — don't die if not found
 }
 
 _install_agents() {
