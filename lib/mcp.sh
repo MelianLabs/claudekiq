@@ -111,7 +111,8 @@ _mcp_handle_tools_list() {
   _mcp_respond "$id" "$(jq -cn --argjson tools "$tools" '{tools:$tools}')"
 }
 
-# Dispatch a tool call to the appropriate cq command
+# Generic schema-driven tool dispatcher
+# Reads positional args from schema and builds command arguments automatically
 _mcp_dispatch_tool() {
   local tool_name="$1" arguments="$2"
 
@@ -122,208 +123,80 @@ _mcp_dispatch_tool() {
   local cmd
   cmd=$(echo "$tool_name" | sed 's/^cq_//' | tr '_' '-')
 
-  # Build argument list from JSON arguments
+  # Get schema for this command
+  local schema_json
+  schema_json=$(cmd_schema "$cmd" 2>/dev/null) || {
+    echo "Unknown tool: ${tool_name}" >&2
+    return 1
+  }
+
+  # Build argument list
   local args=()
 
-  case "$cmd" in
-    start)
-      local template
-      template=$(_mcp_arg "template" "$arguments")
-      [[ -n "$template" ]] && args+=("$template")
-      local keys
-      keys=$(jq -r 'to_entries[] | select(.key != "template") | "\(.key)=\(.value)"' <<< "$arguments")
-      while IFS= read -r kv; do
-        [[ -n "$kv" ]] && args+=("--$kv")
-      done <<< "$keys"
-      cmd_start "${args[@]}"
-      ;;
-    status)
-      local run_id
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      [[ -n "$run_id" ]] && args+=("$run_id")
-      cmd_status "${args[@]}"
-      ;;
-    list)
-      cmd_list
-      ;;
-    log)
-      local run_id tail_n
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      tail_n=$(_mcp_arg "tail" "$arguments")
-      [[ -n "$run_id" ]] && args+=("$run_id")
-      [[ -n "$tail_n" ]] && args+=("--tail" "$tail_n")
-      cmd_log "${args[@]}"
-      ;;
-    pause|resume|cancel|retry|heartbeat)
-      cmd_"$(echo "$cmd" | tr '-' '_')" "$(_mcp_arg "run_id" "$arguments")"
-      ;;
-    step-done)
-      local run_id step_id outcome result_json
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      step_id=$(_mcp_arg "step_id" "$arguments")
-      outcome=$(_mcp_arg "outcome" "$arguments")
-      result_json=$(_mcp_arg "result_json" "$arguments")
-      args=("$run_id" "$step_id" "$outcome")
-      [[ -n "$result_json" ]] && args+=("$result_json")
-      cmd_step_done "${args[@]}"
-      ;;
-    skip)
-      local run_id step_id
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      step_id=$(_mcp_arg "step_id" "$arguments")
-      args=("$run_id")
-      [[ -n "$step_id" ]] && args+=("$step_id")
-      cmd_skip "${args[@]}"
-      ;;
-    todos)
-      local flow
-      flow=$(_mcp_arg "flow" "$arguments")
-      [[ -n "$flow" ]] && args+=("--flow" "$flow")
-      cmd_todos "${args[@]}"
-      ;;
-    todo)
-      local index action note
-      index=$(_mcp_arg "index" "$arguments")
-      action=$(_mcp_arg "action" "$arguments")
-      note=$(_mcp_arg "note" "$arguments")
-      args=("$index" "$action")
-      [[ -n "$note" ]] && args+=("--note" "$note")
-      cmd_todo "${args[@]}"
-      ;;
-    ctx)
-      local subcommand key value run_id
-      subcommand=$(_mcp_arg "subcommand" "$arguments")
-      key=$(_mcp_arg "key" "$arguments")
-      value=$(_mcp_arg "value" "$arguments")
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      if [[ -n "$subcommand" ]]; then
-        args+=("$subcommand")
-        [[ -n "$key" ]] && args+=("$key")
-        [[ -n "$value" ]] && args+=("$value")
+  # Special handling for 'start' command — extra keys become --key=val
+  if [[ "$cmd" == "start" ]]; then
+    local template
+    template=$(_mcp_arg "template" "$arguments")
+    [[ -n "$template" ]] && args+=("$template")
+    local keys
+    keys=$(jq -r 'to_entries[] | select(.key != "template") | "\(.key)=\(.value)"' <<< "$arguments")
+    while IFS= read -r kv; do
+      [[ -n "$kv" ]] && args+=("--$kv")
+    done <<< "$keys"
+    cmd_start "${args[@]}"
+    return
+  fi
+
+  # Check if this is a subcommand-style command
+  local subcommand_param
+  subcommand_param=$(jq -r '.subcommand_param // empty' <<< "$schema_json")
+
+  # Extract positional args in order from schema
+  local positional
+  positional=$(jq -r '.positional // [] | .[]' <<< "$schema_json")
+
+  if [[ -n "$positional" ]]; then
+    while IFS= read -r param_name; do
+      [[ -z "$param_name" ]] && continue
+      # Normalize: convert hyphens to underscores for JSON key lookup
+      local json_key
+      json_key=$(echo "$param_name" | tr '-' '_')
+      local val
+      val=$(_mcp_arg "$json_key" "$arguments")
+      [[ -n "$val" ]] && args+=("$val")
+    done <<< "$positional"
+  fi
+
+  # Extract --flag=value args from remaining parameters (those starting with --)
+  local flag_params
+  flag_params=$(jq -r '.parameters // [] | .[] | select(.name | startswith("--")) | .name | ltrimstr("--") | split("=")[0]' <<< "$schema_json")
+  if [[ -n "$flag_params" ]]; then
+    while IFS= read -r flag_name; do
+      [[ -z "$flag_name" ]] && continue
+      local json_key
+      json_key=$(echo "$flag_name" | tr '-' '_')
+      local val
+      val=$(_mcp_arg "$json_key" "$arguments")
+      if [[ -n "$val" ]]; then
+        # Boolean flags: just add the flag without value
+        if [[ "$val" == "true" ]]; then
+          local param_type
+          param_type=$(jq -r --arg n "--${flag_name}" '.parameters[] | select(.name == $n) | .type // "string"' <<< "$schema_json")
+          if [[ "$param_type" == "boolean" ]]; then
+            args+=("--${flag_name}")
+          else
+            args+=("--${flag_name}=${val}")
+          fi
+        else
+          args+=("--${flag_name}=${val}")
+        fi
       fi
-      [[ -n "$run_id" ]] && args+=("$run_id")
-      cmd_ctx "${args[@]}"
-      ;;
-    add-step)
-      local run_id step_json after
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      step_json=$(_mcp_arg "step_json" "$arguments")
-      after=$(_mcp_arg "after" "$arguments")
-      args=("$run_id" "$step_json")
-      [[ -n "$after" ]] && args+=("--after" "$after")
-      cmd_add_step "${args[@]}"
-      ;;
-    add-steps)
-      local run_id flow after
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      flow=$(_mcp_arg "flow" "$arguments")
-      after=$(_mcp_arg "after" "$arguments")
-      args=("$run_id" "--flow" "$flow")
-      [[ -n "$after" ]] && args+=("--after" "$after")
-      cmd_add_steps "${args[@]}"
-      ;;
-    set-next)
-      local run_id step_id target
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      step_id=$(_mcp_arg "step_id" "$arguments")
-      target=$(_mcp_arg "target" "$arguments")
-      cmd_set_next "$run_id" "$step_id" "$target"
-      ;;
-    workflows)
-      local subcommand name
-      subcommand=$(_mcp_arg "subcommand" "$arguments")
-      [[ -z "$subcommand" ]] && subcommand="list"
-      name=$(_mcp_arg "name" "$arguments")
-      args=("$subcommand")
-      [[ -n "$name" ]] && args+=("$name")
-      cmd_workflows "${args[@]}"
-      ;;
-    check-stale)
-      local timeout mark
-      timeout=$(_mcp_arg "timeout" "$arguments")
-      mark=$(_mcp_arg "mark" "$arguments")
-      [[ -n "$timeout" ]] && args+=("--timeout=$timeout")
-      [[ "$mark" == "true" ]] && args+=("--mark")
-      cmd_check_stale "${args[@]}"
-      ;;
-    cleanup)
-      local max_age
-      max_age=$(_mcp_arg "max_age" "$arguments")
-      [[ -n "$max_age" ]] && args+=("--max-age=$max_age")
-      cmd_cleanup "${args[@]}"
-      ;;
-    scan)
-      cmd_scan
-      ;;
-    for-each)
-      local over delimiter var command run_id step_id
-      over=$(_mcp_arg "over" "$arguments")
-      delimiter=$(_mcp_arg "delimiter" "$arguments")
-      var=$(_mcp_arg "var" "$arguments")
-      command=$(_mcp_arg "command" "$arguments")
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      step_id=$(_mcp_arg "step_id" "$arguments")
-      if [[ -n "$run_id" && -n "$step_id" ]]; then
-        cmd_for_each "$run_id" "$step_id"
-      else
-        args=()
-        [[ -n "$over" ]] && args+=("--over=$over")
-        [[ -n "$delimiter" ]] && args+=("--delimiter=$delimiter")
-        [[ -n "$var" ]] && args+=("--var=$var")
-        [[ -n "$command" ]] && args+=("--command=$command")
-        cmd_for_each "${args[@]}"
-      fi
-      ;;
-    parallel)
-      local steps_json fail_strategy run_id step_id
-      steps_json=$(_mcp_arg "steps" "$arguments")
-      fail_strategy=$(_mcp_arg "fail_strategy" "$arguments")
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      step_id=$(_mcp_arg "step_id" "$arguments")
-      if [[ -n "$run_id" && -n "$step_id" ]]; then
-        cmd_parallel "$run_id" "$step_id"
-      else
-        args=()
-        [[ -n "$steps_json" ]] && args+=("--steps=$steps_json")
-        [[ -n "$fail_strategy" ]] && args+=("--fail-strategy=$fail_strategy")
-        cmd_parallel "${args[@]}"
-      fi
-      ;;
-    batch)
-      local workflow jobs_json run_id step_id
-      workflow=$(_mcp_arg "workflow" "$arguments")
-      jobs_json=$(_mcp_arg "jobs" "$arguments")
-      run_id=$(_mcp_arg "run_id" "$arguments")
-      step_id=$(_mcp_arg "step_id" "$arguments")
-      if [[ -n "$run_id" && -n "$step_id" ]]; then
-        cmd_batch "$run_id" "$step_id"
-      else
-        args=()
-        [[ -n "$workflow" ]] && args+=("--workflow=$workflow")
-        [[ -n "$jobs_json" ]] && args+=("--jobs=$jobs_json")
-        cmd_batch "${args[@]}"
-      fi
-      ;;
-    workers)
-      local subcommand session_id job_id action data
-      subcommand=$(_mcp_arg "subcommand" "$arguments")
-      [[ -z "$subcommand" ]] && subcommand="help"
-      session_id=$(_mcp_arg "session_id" "$arguments")
-      job_id=$(_mcp_arg "job_id" "$arguments")
-      action=$(_mcp_arg "action" "$arguments")
-      data=$(_mcp_arg "data" "$arguments")
-      args=("$subcommand")
-      [[ -n "$session_id" ]] && args+=("$session_id")
-      [[ -n "$job_id" ]] && args+=("$job_id")
-      [[ -n "$action" ]] && args+=("$action")
-      [[ -n "$data" ]] && args+=("$data")
-      cmd_workers "${args[@]}"
-      ;;
-    *)
-      echo "Unknown tool: ${tool_name}" >&2
-      return 1
-      ;;
-  esac
+    done <<< "$flag_params"
+  fi
+
+  # Dispatch to the command function
+  local func_name="cmd_$(echo "$cmd" | tr '-' '_')"
+  "$func_name" "${args[@]}"
 }
 
 # Handle tools/call request

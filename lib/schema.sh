@@ -26,6 +26,7 @@ cmd_schema() {
   "command": "start",
   "description": "Start a new workflow run from a template. Workflows support prompt/context fields on agent steps, params section, and model validation.",
   "usage": "cq start <template> [--key=val]...",
+  "positional": ["template"],
   "parameters": [
     {"name": "template", "type": "string", "required": true, "description": "Workflow template name"},
     {"name": "--key=val", "type": "string", "required": false, "description": "Context variables (repeatable)"},
@@ -47,6 +48,7 @@ JSON
   "command": "status",
   "description": "Show dashboard (no args) or detailed run status",
   "usage": "cq status [run_id]",
+  "positional": ["run_id"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": false, "description": "Run ID for detailed status"}
   ],
@@ -62,6 +64,7 @@ JSON
   "command": "list",
   "description": "List all workflow runs",
   "usage": "cq list",
+  "positional": [],
   "parameters": [],
   "output": "array of run objects",
   "flags": ["--json"],
@@ -75,6 +78,7 @@ JSON
   "command": "log",
   "description": "Show event log for a run",
   "usage": "cq log <run_id> [--tail N]",
+  "positional": ["run_id"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID"},
     {"name": "--tail", "type": "integer", "required": false, "description": "Show last N entries"}
@@ -90,6 +94,7 @@ JSON
   "command": "pause",
   "description": "Pause a running or queued workflow",
   "usage": "cq pause <run_id>",
+  "positional": ["run_id"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID"}
   ],
@@ -104,6 +109,7 @@ JSON
   "command": "resume",
   "description": "Resume a paused workflow",
   "usage": "cq resume <run_id>",
+  "positional": ["run_id"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID"}
   ],
@@ -118,6 +124,7 @@ JSON
   "command": "cancel",
   "description": "Cancel a workflow",
   "usage": "cq cancel <run_id>",
+  "positional": ["run_id"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID"}
   ],
@@ -132,6 +139,7 @@ JSON
   "command": "retry",
   "description": "Retry a failed workflow from the failed step",
   "usage": "cq retry <run_id>",
+  "positional": ["run_id"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID (must be in failed status)"}
   ],
@@ -146,6 +154,7 @@ JSON
   "command": "step-done",
   "description": "Mark a step as complete with pass or fail outcome",
   "usage": "cq step-done <run_id> <step_id> pass|fail [result_json]",
+  "positional": ["run_id", "step_id", "outcome", "result_json"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID"},
     {"name": "step_id", "type": "string", "required": true, "description": "Step ID"},
@@ -163,6 +172,7 @@ JSON
   "command": "skip",
   "description": "Skip the current or named step",
   "usage": "cq skip <run_id> [step_id]",
+  "positional": ["run_id", "step_id"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID"},
     {"name": "step_id", "type": "string", "required": false, "description": "Step ID (defaults to current step)"}
@@ -178,6 +188,7 @@ JSON
   "command": "todos",
   "description": "List pending human actions across all runs",
   "usage": "cq todos [--flow <run_id>]",
+  "positional": [],
   "parameters": [
     {"name": "--flow", "type": "string", "required": false, "description": "Filter by run ID"}
   ],
@@ -192,6 +203,7 @@ JSON
   "command": "todo",
   "description": "Resolve a pending human action",
   "usage": "cq todo <#> approve|reject|override|dismiss [--note \"...\"]",
+  "positional": ["index", "action"],
   "parameters": [
     {"name": "index", "type": "integer", "required": true, "description": "TODO number from 'cq todos' list"},
     {"name": "action", "type": "string", "required": true, "description": "approve, reject, override, or dismiss"},
@@ -208,6 +220,8 @@ JSON
   "command": "ctx",
   "description": "Show, get, or set context variables for a run",
   "usage": "cq ctx <run_id> | cq ctx get <key> <run_id> | cq ctx set <key> <value> <run_id>",
+  "positional": ["subcommand", "key", "value", "run_id"],
+  "subcommand_param": "subcommand",
   "parameters": [
     {"name": "subcommand", "type": "string", "required": false, "description": "get or set"},
     {"name": "key", "type": "string", "required": false, "description": "Variable name"},
@@ -225,6 +239,7 @@ JSON
   "command": "add-step",
   "description": "Add a step to a running workflow",
   "usage": "cq add-step <run_id> <step_json> [--after <step_id>]",
+  "positional": ["run_id", "step_json"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID"},
     {"name": "step_json", "type": "json", "required": true, "description": "Step definition as JSON"},
@@ -241,6 +256,7 @@ JSON
   "command": "add-steps",
   "description": "Insert steps from another workflow template",
   "usage": "cq add-steps <run_id> --flow <template> [--after <step_id>]",
+  "positional": ["run_id"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID"},
     {"name": "--flow", "type": "string", "required": true, "description": "Template name to insert from"},
@@ -257,6 +273,7 @@ JSON
   "command": "set-next",
   "description": "Force the next step for a given step",
   "usage": "cq set-next <run_id> <step_id> <target>",
+  "positional": ["run_id", "step_id", "target"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID"},
     {"name": "step_id", "type": "string", "required": true, "description": "Step to modify"},
@@ -273,10 +290,16 @@ JSON
   "command": "workflows",
   "description": "Manage workflow templates",
   "usage": "cq workflows list|show|validate",
+  "positional": ["subcommand", "name"],
+  "subcommand_param": "subcommand",
   "subcommands": [
     {"name": "list", "description": "List available workflow templates"},
     {"name": "show", "description": "Show template details", "args": ["name"]},
     {"name": "validate", "description": "Validate a workflow YAML file", "args": ["file"]}
+  ],
+  "parameters": [
+    {"name": "subcommand", "type": "string", "required": false, "description": "list, show, or validate"},
+    {"name": "name", "type": "string", "required": false, "description": "Workflow name or file path"}
   ],
   "flags": ["--json"],
   "examples": ["cq workflows list", "cq workflows show feature", "cq workflows validate my-workflow.yml"]
@@ -304,6 +327,7 @@ JSON
   "command": "init",
   "description": "Initialize .claudekiq/ in the current project",
   "usage": "cq init [--mcp]",
+  "positional": [],
   "parameters": [
     {"name": "--mcp", "type": "boolean", "required": false, "description": "Also install MCP server config into .mcp.json"}
   ],
@@ -318,6 +342,7 @@ JSON
   "command": "schema",
   "description": "Show command schema for AI discoverability",
   "usage": "cq schema [command]",
+  "positional": ["command"],
   "parameters": [
     {"name": "command", "type": "string", "required": false, "description": "Command name (omit for list)"}
   ],
@@ -331,6 +356,7 @@ JSON
   "command": "cleanup",
   "description": "Remove expired workflow runs",
   "usage": "cq cleanup",
+  "positional": [],
   "parameters": [],
   "flags": ["--json"],
   "examples": ["cq cleanup"]
@@ -343,6 +369,7 @@ JSON
   "command": "version",
   "description": "Show cq version",
   "usage": "cq version",
+  "positional": [],
   "parameters": [],
   "flags": ["--json"],
   "examples": ["cq version"]
@@ -355,6 +382,7 @@ JSON
   "command": "help",
   "description": "Show help text",
   "usage": "cq help [command]",
+  "positional": ["command"],
   "parameters": [
     {"name": "command", "type": "string", "required": false, "description": "Command name for specific help"}
   ],
@@ -368,6 +396,7 @@ JSON
   "command": "heartbeat",
   "description": "Write a heartbeat timestamp for a running workflow",
   "usage": "cq heartbeat <run_id>",
+  "positional": ["run_id"],
   "parameters": [
     {"name": "run_id", "type": "string", "required": true, "description": "Run ID"}
   ],
@@ -382,6 +411,7 @@ JSON
   "command": "check-stale",
   "description": "Detect running workflows with stale heartbeats",
   "usage": "cq check-stale [--timeout=N] [--mark]",
+  "positional": [],
   "parameters": [
     {"name": "--timeout", "type": "integer", "required": false, "description": "Seconds before a heartbeat is considered stale (default: 120)"},
     {"name": "--mark", "type": "boolean", "required": false, "description": "Mark stale runs as blocked"}
@@ -397,6 +427,7 @@ JSON
   "command": "mcp",
   "description": "Start MCP (Model Context Protocol) stdio server — exposes all cq commands as Claude Code plugin tools",
   "usage": "cq mcp",
+  "positional": [],
   "parameters": [],
   "examples": ["cq mcp", "claude mcp add --transport stdio cq -- cq mcp"]
 }
@@ -408,6 +439,7 @@ JSON
   "command": "scan",
   "description": "Scan project for available agents, skills, plugins, and stack info. Writes results to .claudekiq/settings.json",
   "usage": "cq scan",
+  "positional": [],
   "parameters": [],
   "output": {"agents": "array", "skills": "array", "plugins": "array", "stack": "object", "scanned_at": "string"},
   "flags": ["--json"],
@@ -421,48 +453,20 @@ JSON
   "command": "workers",
   "description": "Parallel worker orchestration — manage worker sessions for concurrent workflow execution",
   "usage": "cq workers <init|status|answer|cleanup>",
-  "subcommands": [
-    {
-      "name": "init",
-      "description": "Create a new worker session",
-      "usage": "cq workers init",
-      "parameters": [],
-      "flags": ["--json"]
-    },
-    {
-      "name": "status",
-      "description": "Show status of all workers in a session",
-      "usage": "cq workers status <session_id>",
-      "parameters": [
-        {"name": "session_id", "type": "string", "required": true, "description": "Worker session ID"}
-      ],
-      "flags": ["--json"]
-    },
-    {
-      "name": "answer",
-      "description": "Send an answer to a gated worker",
-      "usage": "cq workers answer <session_id> <job_id> <action> [data_json]",
-      "parameters": [
-        {"name": "session_id", "type": "string", "required": true, "description": "Worker session ID"},
-        {"name": "job_id", "type": "string", "required": true, "description": "Job ID of the gated worker"},
-        {"name": "action", "type": "string", "required": true, "description": "Action: approve or reject"},
-        {"name": "data_json", "type": "json", "required": false, "description": "Optional JSON data to pass to the worker context"}
-      ],
-      "flags": ["--json"]
-    },
-    {
-      "name": "cleanup",
-      "description": "Remove old worker sessions",
-      "usage": "cq workers cleanup [--max-age=N]",
-      "parameters": [],
-      "flags": ["--max-age=N", "--json"]
-    }
+  "positional": ["subcommand", "session_id", "job_id", "action", "data"],
+  "subcommand_param": "subcommand",
+  "parameters": [
+    {"name": "subcommand", "type": "string", "required": false, "description": "init, status, answer, or cleanup"},
+    {"name": "session_id", "type": "string", "required": false, "description": "Worker session ID"},
+    {"name": "job_id", "type": "string", "required": false, "description": "Job ID"},
+    {"name": "action", "type": "string", "required": false, "description": "Action: approve or reject"},
+    {"name": "data", "type": "json", "required": false, "description": "Optional JSON data"}
   ],
+  "flags": ["--json"],
   "examples": [
     "cq workers init --json",
     "cq workers status abc12345 --json",
     "cq workers answer abc12345 BUG-1 approve",
-    "cq workers answer abc12345 BUG-1 approve '{\"key\":\"value\"}'",
     "cq workers cleanup --max-age=86400"
   ]
 }
@@ -474,6 +478,7 @@ JSON
   "command": "for-each",
   "description": "Iterate over a list, executing a command or sub-step for each item",
   "usage": "cq for-each --over=<list> --var=<name> --command=<cmd> | cq for-each <run_id> <step_id>",
+  "positional": ["run_id", "step_id"],
   "parameters": [
     {"name": "--over", "type": "string", "required": false, "description": "Comma-separated list to iterate over"},
     {"name": "--delimiter", "type": "string", "required": false, "description": "List delimiter (default: ,)"},
@@ -493,6 +498,7 @@ JSON
   "command": "parallel",
   "description": "Execute multiple sub-steps concurrently",
   "usage": "cq parallel --steps=<json_array> | cq parallel <run_id> <step_id>",
+  "positional": ["run_id", "step_id"],
   "parameters": [
     {"name": "--steps", "type": "json", "required": false, "description": "JSON array of step definitions"},
     {"name": "--fail-strategy", "type": "string", "required": false, "description": "wait_all or fail_fast (default: wait_all)"},
@@ -510,6 +516,7 @@ JSON
   "command": "batch",
   "description": "Create a worker session for batch processing jobs",
   "usage": "cq batch --workflow=<name> --jobs=<json_array> | cq batch <run_id> <step_id>",
+  "positional": ["run_id", "step_id"],
   "parameters": [
     {"name": "--workflow", "type": "string", "required": false, "description": "Workflow template name"},
     {"name": "--jobs", "type": "json", "required": false, "description": "JSON array of job definitions"},

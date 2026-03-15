@@ -22,13 +22,14 @@ cmd_init() {
   if [[ -d "${project_dir}/.claudekiq" ]]; then
     # Already initialized — still update skills, hooks, and gitignore in case of upgrades
     _install_skill "$project_dir"
+    _install_agent_skill "$project_dir"
     _install_workers_skill "$project_dir"
     _install_init_skill "$project_dir"
     _install_agents "$project_dir"
     _install_hooks "$project_dir"
     _install_settings "$project_dir"
 
-    # Ensure .gitignore has workers entry (added in v2.0.0)
+    # Ensure .gitignore has workers entry
     local gitignore="${project_dir}/.gitignore"
     if [[ -f "$gitignore" ]]; then
       grep -qF '.claudekiq/workers/' "$gitignore" || echo '.claudekiq/workers/' >> "$gitignore"
@@ -72,6 +73,7 @@ cmd_init() {
 
   # Install Claude Code skills, agents, hooks, and settings
   _install_skill "$project_dir"
+  _install_agent_skill "$project_dir"
   _install_workers_skill "$project_dir"
   _install_init_skill "$project_dir"
   _install_agents "$project_dir"
@@ -107,6 +109,21 @@ _install_skill() {
   fi
 
   cq_die "Cannot find skills/cq/SKILL.md — please reinstall cq"
+}
+
+_install_agent_skill() {
+  local project_dir="$1"
+  local skill_dir="${project_dir}/.claude/skills/cq-agent"
+  mkdir -p "$skill_dir"
+
+  local src="${CQ_SCRIPT_DIR}/skills/cq-agent/SKILL.md"
+  [[ ! -f "$src" ]] && src="${CQ_SCRIPT_DIR}/../skills/cq-agent/SKILL.md"
+  if [[ -f "$src" ]]; then
+    cp "$src" "${skill_dir}/SKILL.md"
+    return
+  fi
+
+  # cq-agent is optional — don't die if not found during partial installs
 }
 
 _install_workers_skill() {
