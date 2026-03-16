@@ -2,3 +2,4 @@
 .claudekiq/runs/
 .claude/commands/cq*.md
 .claude/cq.md
+.claude-plugin/plugin.json
