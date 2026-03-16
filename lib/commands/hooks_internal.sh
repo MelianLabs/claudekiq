@@ -141,6 +141,9 @@ cmd__safety_check() {
         rm_claudekiq) messages="Warning: deleting .claudekiq directory — use cq cleanup instead" ;;
         git_checkout) messages="Warning: git checkout/switch while cq workflows are running/gated." ;;
         edit_run_files) messages="Warning: editing run files directly — use cq commands instead" ;;
+        git_force_push) messages="Warning: git force-push can overwrite remote history" ;;
+        git_reset_hard) messages="Warning: git reset --hard discards uncommitted changes" ;;
+        git_rebase) messages="Warning: git rebase during active workflow can cause conflicts" ;;
         *) messages="Warning: operation '${operation}' flagged by safety policy" ;;
       esac
       echo "$messages" >&2
@@ -152,6 +155,9 @@ cmd__safety_check() {
         rm_claudekiq) messages="Blocked: cannot delete .claudekiq directory — use cq cleanup instead" ;;
         git_checkout) messages="Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first." ;;
         edit_run_files) messages="Blocked: do not edit run files directly — use cq commands instead" ;;
+        git_force_push) messages="Blocked: git force-push can overwrite remote history. Use regular push instead." ;;
+        git_reset_hard) messages="Blocked: git reset --hard discards uncommitted changes. Stash or commit first." ;;
+        git_rebase) messages="Blocked: git rebase during active workflow can cause conflicts. Pause or cancel active runs first." ;;
         *) messages="Blocked: operation '${operation}' blocked by safety policy" ;;
       esac
       echo "$messages" >&2
@@ -240,4 +246,12 @@ cmd__capture_output() {
   fi
 
   exit 0
+}
+
+# Resolve context builders for a step and output assembled context
+# Called via: cq _resolve-context <run_id> <step_id>
+cmd__resolve_context() {
+  local run_id="${1:?Usage: cq _resolve-context <run_id> <step_id>}"
+  local step_id="${2:?Usage: cq _resolve-context <run_id> <step_id>}"
+  cq_resolve_context_builders "$run_id" "$step_id"
 }

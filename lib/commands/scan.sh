@@ -4,11 +4,12 @@
 cmd_scan() {
   [[ -d "${CQ_PROJECT_ROOT}/.claudekiq" ]] || cq_die "Not a cq project. Run 'cq init' first."
 
-  local agents skills plugin_skills stacks
+  local agents skills plugin_skills stacks commands
   agents=$(_scan_agents)
   skills=$(_scan_skills)
   plugin_skills=$(_scan_plugin_skills)
   stacks=$(_scan_stacks)
+  commands=$(_scan_commands)
 
   # Merge plugin skills into skills (deduplicate by name, plugin wins)
   skills=$(jq -n --argjson local "$skills" --argjson plugin "$plugin_skills" '
@@ -18,25 +19,39 @@ cmd_scan() {
     )
   ')
 
-  _merge_scan_results "$agents" "$skills" "$stacks"
+  _merge_scan_results "$agents" "$skills" "$stacks" "$commands"
+
+  # Validate workflows and collect warnings
+  local workflow_warnings
+  workflow_warnings=$(_scan_validate_workflows)
 
   # Regenerate .claude/cq.md context file
   _generate_cq_md >/dev/null 2>&1 || true
 
   local ts
   ts=$(cq_now)
-  local agent_count skill_count stack_count
+  local agent_count skill_count stack_count command_count
   agent_count=$(jq 'length' <<< "$agents")
   skill_count=$(jq 'length' <<< "$skills")
   stack_count=$(jq 'length' <<< "$stacks")
+  command_count=$(jq 'length' <<< "$commands")
 
   cq_json_out \
     --argjson agents "$agents" \
     --argjson skills "$skills" \
     --argjson stacks "$stacks" \
+    --argjson commands "$commands" \
+    --argjson workflow_warnings "$workflow_warnings" \
     --arg scanned_at "$ts" \
-    '{agents:$agents, skills:$skills, stacks:$stacks, scanned_at:$scanned_at}' || \
-    cq_info "Scanned: ${agent_count} agent(s), ${skill_count} skill(s), ${stack_count} stack(s)"
+    '{agents:$agents, skills:$skills, stacks:$stacks, commands:$commands, workflow_warnings:$workflow_warnings, scanned_at:$scanned_at}' || {
+    cq_info "Scanned: ${agent_count} agent(s), ${skill_count} skill(s), ${command_count} command(s), ${stack_count} stack(s)"
+    if [[ "$(jq 'length' <<< "$workflow_warnings")" -gt 0 ]]; then
+      local wf_warn
+      while IFS= read -r wf_warn; do
+        [[ -n "$wf_warn" ]] && cq_warn "Workflow validation issue: ${wf_warn}"
+      done <<< "$(jq -r '.[]' <<< "$workflow_warnings")"
+    fi
+  }
 }
 
 _scan_agents() {
@@ -376,8 +391,66 @@ _extract_frontmatter() {
   echo "$content" | yq -o json '.' 2>/dev/null || return 1
 }
 
+_scan_commands() {
+  local commands_dir="${CQ_PROJECT_ROOT}/.claude/commands"
+  local -a items=()
+
+  if [[ -d "$commands_dir" ]]; then
+    local file
+    for file in "$commands_dir"/*.md; do
+      [[ -f "$file" ]] || continue
+      local basename_no_ext
+      basename_no_ext=$(basename "$file" .md)
+
+      local frontmatter
+      frontmatter=$(_extract_frontmatter "$file" 2>/dev/null) || frontmatter=""
+
+      local item
+      if [[ -n "$frontmatter" && "$frontmatter" != "null" ]]; then
+        item=$(jq -cn \
+          --arg fn "$basename_no_ext" \
+          --argjson fm "$frontmatter" \
+          '{name: ($fm.name // $fn), description: ($fm.description // null)} | with_entries(select(.value != null))') || continue
+      else
+        item=$(jq -cn --arg fn "$basename_no_ext" '{name: $fn}')
+      fi
+      items+=("$item")
+    done
+  fi
+
+  if [[ ${#items[@]} -gt 0 ]]; then
+    printf '%s\n' "${items[@]}" | jq -s '.'
+  else
+    echo '[]'
+  fi
+}
+
+_scan_validate_workflows() {
+  local workflows_dir="${CQ_PROJECT_ROOT}/.claudekiq/workflows"
+  local -a warnings=()
+
+  if [[ -d "$workflows_dir" ]]; then
+    local wf
+    for wf in "$workflows_dir"/*.yml "$workflows_dir"/*.yaml; do
+      [[ -f "$wf" ]] || continue
+      # Run validation in non-JSON mode to get predictable output
+      local exit_code=0
+      CQ_JSON=false cmd_workflows_validate "$wf" >/dev/null 2>&1 || exit_code=$?
+      if [[ "$exit_code" -ne 0 ]]; then
+        warnings+=("$(basename "$wf")")
+      fi
+    done
+  fi
+
+  if [[ ${#warnings[@]} -gt 0 ]]; then
+    printf '%s\n' "${warnings[@]}" | jq -Rcs 'split("\n") | map(select(. != ""))'
+  else
+    echo '[]'
+  fi
+}
+
 _merge_scan_results() {
-  local agents="$1" skills="$2" stacks="${3:-"[]"}"
+  local agents="$1" skills="$2" stacks="${3:-"[]"}" commands="${4:-"[]"}"
   local settings_file="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
   local ts
   ts=$(cq_now)
@@ -392,8 +465,9 @@ _merge_scan_results() {
     --argjson agents "$agents" \
     --argjson skills "$skills" \
     --argjson stacks "$stacks" \
+    --argjson commands "$commands" \
     --arg ts "$ts" \
-    '. + {agents: $agents, skills: $skills, stacks: $stacks, scanned_at: $ts} | del(.plugins) | del(.stack)' \
+    '. + {agents: $agents, skills: $skills, stacks: $stacks, commands: $commands, scanned_at: $ts} | del(.plugins) | del(.stack)' \
     <<< "$existing")
 
   echo "$updated" > "$settings_file"

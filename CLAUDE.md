@@ -52,7 +52,7 @@ MCP server mode is in `lib/mcp.sh`, loaded on-demand.
 
 All run state lives in `.claudekiq/runs/<run_id>/` (gitignored):
 - `meta.json` — run metadata (workflow, status, priority, timestamps)
-- `state.json` — per-step state (status, visit count, results)
+- `state.json` — per-step state (status, visit count, results, output, error_output)
 - `context.json` — interpolation variables
 - `steps.json` — resolved step definitions
 - `log.jsonl` — append-only event log
@@ -91,13 +91,15 @@ Hooks are auto-installed by `cq init`:
 
 ### Project Discovery (`cq scan`)
 
-`cq scan` discovers agents, skills, and stacks available in the project:
+`cq scan` discovers agents, skills, commands, and stacks available in the project:
 - Scans `.claude/agents/*.md` — parses YAML frontmatter for name, model, tools, description
 - Scans `.claude/skills/*/SKILL.md` — parses frontmatter for name, description, allowed-tools
+- Scans `.claude/commands/*.md` — discovers custom slash commands (name, description from frontmatter or filename)
 - Scans `.claude-plugin/plugin.json` — discovers plugin-provided skills (marked with `source: "plugin"`)
 - Detects project stacks — returns `stacks` as an array (multi-stack support: e.g., Rails + React)
 - Each stack object has: `language`, `framework`, `test_command`, `build_command`, `lint_command`
-- Writes results to `.claudekiq/settings.json` as `agents`, `skills`, `stacks` arrays
+- Validates all workflows after scan — reports warnings for invalid ones
+- Writes results to `.claudekiq/settings.json` as `agents`, `skills`, `commands`, `stacks` arrays
 - Preserves existing user config keys (including `agent_mappings`) during merge
 - Auto-runs on `cq init` (both fresh and re-init)
 
@@ -113,11 +115,37 @@ Custom step types resolve via `cq_resolve_step_type()` in `lib/core.sh`:
 3. Scan results: `agents` array in settings.json → returns `"agent"`
 4. Otherwise: returns `"convention"` (treated as agent step with type name as semantic context)
 
+### Step Output Capture
+
+`cq step-done` supports `--output=<text>` and `--stderr=<text>` flags:
+- Output is stored in `state.json` as `.output` and `.error_output` per step
+- Truncated output (500 chars) is included in log events
+- On retry, previous `error_output` is available via the `error_context` context builder
+- Works for both pass and fail outcomes
+
+### Context Builders
+
+Agent steps can define `context_builders` to automatically gather context before dispatch:
+
+```yaml
+context_builders:
+  - type: git_diff          # git diff HEAD output (200 lines max)
+  - type: file_contents     # requires paths: ["file1", "file2"]
+    paths: ["src/app.ts"]
+  - type: error_context     # previous step error_output from state.json
+  - type: test_output       # requires command: "npm test"
+    command: "npm test 2>&1 | tail -50"
+  - type: command_output    # requires command: "some command"
+    command: "echo hello"
+```
+
+Resolved via `cq _resolve-context <run_id> <step_id>`. Implementation in `cq_resolve_context_builders()` in `lib/core.sh`.
+
 ### Context File (`.claude/cq.md`)
 
 `cq init` and `cq scan` generate `.claude/cq.md` with comprehensive project context:
 - Available workflows with step summaries (step names, gate types, params)
-- Detected agents, stacks, and skills
+- Detected agents, stacks, skills, and custom commands
 - Usage patterns (start, monitor, approve, skip, cancel)
 - Team workflow notes (concurrency, agents)
 - Notification config visibility
@@ -147,6 +175,8 @@ The `safety` config key controls hook behavior. Supports both simple string and 
 Set via: `cq config set safety relaxed` or `cq config set safety.git_commit warn`
 
 Safety checks are centralized in `cq _safety-check <operation>` (called by hooks).
+
+Supported operations: `rm_claudekiq`, `git_checkout`, `git_commit`, `edit_run_files`, `git_force_push`, `git_reset_hard`, `git_rebase`
 
 For parallel batch processing, use Claude Code's built-in `/batch` skill.
 

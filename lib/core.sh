@@ -478,6 +478,62 @@ cq_safety_policy() {
   fi
 }
 
+# --- Context builders ---
+
+# Resolve context_builders for a step and return assembled markdown context.
+# Usage: cq_resolve_context_builders <run_id> <step_id>
+cq_resolve_context_builders() {
+  local run_id="$1" step_id="$2"
+  local step builders_json result=""
+  step=$(cq_get_step "$run_id" "$step_id")
+  builders_json=$(jq -r '.context_builders // []' <<< "$step")
+  [[ "$builders_json" == "[]" ]] && return 0
+
+  local count i builder_type
+  count=$(jq 'length' <<< "$builders_json")
+  for ((i=0; i<count; i++)); do
+    local builder
+    builder=$(jq --argjson i "$i" '.[$i]' <<< "$builders_json")
+    builder_type=$(jq -r '.type' <<< "$builder")
+
+    case "$builder_type" in
+      git_diff)
+        local diff
+        diff=$(git diff HEAD 2>/dev/null | head -200 || true)
+        [[ -n "$diff" ]] && result="${result}"$'\n\n'"## Git Diff"$'\n'"\`\`\`"$'\n'"${diff}"$'\n'"\`\`\`"
+        ;;
+      error_context)
+        local prev_error
+        prev_error=$(jq -r --arg id "$step_id" '.[$id].error_output // empty' "$(cq_run_dir "$run_id")/state.json" 2>/dev/null)
+        [[ -n "$prev_error" ]] && result="${result}"$'\n\n'"## Previous Error"$'\n'"\`\`\`"$'\n'"${prev_error}"$'\n'"\`\`\`"
+        ;;
+      file_contents)
+        local paths
+        paths=$(jq -r '.paths // [] | .[]' <<< "$builder")
+        while IFS= read -r path; do
+          [[ -z "$path" ]] && continue
+          if [[ -f "$path" ]]; then
+            local content
+            content=$(head -100 "$path")
+            result="${result}"$'\n\n'"## File: ${path}"$'\n'"\`\`\`"$'\n'"${content}"$'\n'"\`\`\`"
+          fi
+        done <<< "$paths"
+        ;;
+      test_output|command_output)
+        local cmd
+        cmd=$(jq -r '.command // empty' <<< "$builder")
+        if [[ -n "$cmd" ]]; then
+          local output
+          output=$(eval "$cmd" 2>&1 | tail -50 || true)
+          [[ -n "$output" ]] && result="${result}"$'\n\n'"## Output: ${cmd}"$'\n'"\`\`\`"$'\n'"${output}"$'\n'"\`\`\`"
+        fi
+        ;;
+    esac
+  done
+
+  printf '%s' "$result"
+}
+
 # --- Platform detection ---
 
 cq_detect_platform() {

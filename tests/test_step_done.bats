@@ -124,6 +124,54 @@ teardown() {
   [ "$(run_meta "$run_id" current_step)" = "implement" ]
 }
 
+@test "step-done --output stores output in state" {
+  local run_id
+  run_id=$(start_minimal)
+  "$CQ" step-done "$run_id" step-a pass --output="build successful" >/dev/null 2>&1
+  local stored_output
+  stored_output=$(jq -r '.["step-a"].output' ".claudekiq/runs/$run_id/state.json")
+  [ "$stored_output" = "build successful" ]
+}
+
+@test "step-done --stderr stores error_output in state" {
+  local run_id
+  run_id=$(start_minimal)
+  "$CQ" step-done "$run_id" step-a fail --stderr="Error: module not found" >/dev/null 2>&1
+  local stored_error
+  stored_error=$(jq -r '.["step-a"].error_output' ".claudekiq/runs/$run_id/state.json")
+  [ "$stored_error" = "Error: module not found" ]
+}
+
+@test "step-done output included in log event" {
+  local run_id
+  run_id=$(start_minimal)
+  "$CQ" step-done "$run_id" step-a fail --output="test output data" >/dev/null 2>&1
+  local log_entry
+  log_entry=$(grep "step_done" ".claudekiq/runs/$run_id/log.jsonl" | tail -1)
+  local log_output
+  log_output=$(jq -r '.data.output' <<< "$log_entry")
+  [ "$log_output" = "test output data" ]
+}
+
+@test "step-done output stored for both pass and fail" {
+  local run_id
+  run_id=$(start_minimal)
+
+  # Pass with output
+  "$CQ" step-done "$run_id" step-a pass --output="all tests passed" >/dev/null 2>&1
+  local stored_output
+  stored_output=$(jq -r '.["step-a"].output' ".claudekiq/runs/$run_id/state.json")
+  [ "$stored_output" = "all tests passed" ]
+
+  # Fail with output and stderr
+  "$CQ" step-done "$run_id" step-b fail --output="stdout text" --stderr="stderr text" >/dev/null 2>&1
+  stored_output=$(jq -r '.["step-b"].output' ".claudekiq/runs/$run_id/state.json")
+  [ "$stored_output" = "stdout text" ]
+  local stored_error
+  stored_error=$(jq -r '.["step-b"].error_output' ".claudekiq/runs/$run_id/state.json")
+  [ "$stored_error" = "stderr text" ]
+}
+
 @test "skip marks step as skipped and advances" {
   local run_id
   run_id=$(start_minimal)

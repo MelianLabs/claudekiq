@@ -198,6 +198,30 @@ cmd_workflows_validate() {
     [[ -n "$err" ]] && errors+=("$err")
   done <<< "$workflow_errors"
 
+  # Validate context_builders field on steps
+  local cb_errors
+  cb_errors=$(jq -r '
+    .steps[] | select(.context_builders != null) |
+    .id as $sid |
+    if (.context_builders | type) != "array" then
+      "Step '\''\($sid)'\'': context_builders must be an array"
+    else
+      .context_builders | to_entries[] |
+      if (.value.type == null or .value.type == "") then
+        "Step '\''\($sid)'\'' context_builder \(.key): missing '\''type'\'' field"
+      elif (.value.type | IN("git_diff","file_contents","error_context","test_output","command_output") | not) then
+        "Step '\''\($sid)'\'': unknown context_builder type '\''\(.value.type)'\''. Known: git_diff, file_contents, error_context, test_output, command_output"
+      elif (.value.type == "file_contents") and (.value.paths == null or (.value.paths | type) != "array") then
+        "Step '\''\($sid)'\'' context_builder '\''\(.value.type)'\'': requires '\''paths'\'' array"
+      elif (.value.type == "test_output" or .value.type == "command_output") and (.value.command == null or .value.command == "") then
+        "Step '\''\($sid)'\'' context_builder '\''\(.value.type)'\'': requires '\''command'\'' string"
+      else empty end
+    end
+  ' <<< "$wf_json" 2>/dev/null)
+  while IFS= read -r err; do
+    [[ -n "$err" ]] && errors+=("$err")
+  done <<< "$cb_errors"
+
   # Check for duplicate step IDs
   local dupes
   dupes=$(jq -r '[.steps[].id] | group_by(.) | map(select(length > 1)) | .[0][0] // empty' <<< "$wf_json")

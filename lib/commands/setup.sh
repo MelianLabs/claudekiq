@@ -246,7 +246,7 @@ _hooks_install() {
       "hooks": [
         {
           "type": "command",
-          "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); rc=0; case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) cq _safety-check rm_claudekiq; rc=$?;; *\"git checkout\"*|*\"git switch\"*) cq _safety-check git_checkout; rc=$?;; *\"git commit\"*) echo \"$input\" | cq _safety-check git_commit; rc=$?;; esac; exit $rc'"
+          "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); rc=0; case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) cq _safety-check rm_claudekiq; rc=$?;; *\"git checkout\"*|*\"git switch\"*) cq _safety-check git_checkout; rc=$?;; *\"git commit\"*) echo \"$input\" | cq _safety-check git_commit; rc=$?;; *\"git push\"*\"--force\"*|*\"git push\"*\"-f \"*) cq _safety-check git_force_push; rc=$?;; *\"git reset\"*\"--hard\"*) cq _safety-check git_reset_hard; rc=$?;; *\"git rebase\"*) cq _safety-check git_rebase; rc=$?;; esac; exit $rc'"
         }
       ]
     },
@@ -560,6 +560,15 @@ _generate_cq_md() {
       if [[ -n "$agents" ]]; then
         echo '## Available Agents'
         echo "$agents"
+        echo ''
+      fi
+
+      # Custom commands
+      local commands
+      commands=$(jq -r '.commands // [] | .[] | "- /" + .name + (if .description then " — " + .description else "" end)' "$settings_file" 2>/dev/null || true)
+      if [[ -n "$commands" ]]; then
+        echo '## Custom Commands'
+        echo "$commands"
         echo ''
       fi
     fi

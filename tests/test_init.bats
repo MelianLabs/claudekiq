@@ -255,6 +255,30 @@ AGENT
   grep -q 'Steps:' .claude/cq.md
 }
 
+@test "cq.md includes custom commands section" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  mkdir -p .claude/commands
+  cat > .claude/commands/deploy.md <<'CMD'
+---
+name: deploy
+description: "Deploy to production"
+---
+Deploy content.
+CMD
+  "$CQ" init >/dev/null
+  grep -q 'Custom Commands' .claude/cq.md
+  grep -q 'deploy' .claude/cq.md
+}
+
+@test "hooks detect git force-push pattern" {
+  cd "$TEST_DIR"
+  "$CQ" init >/dev/null
+  grep -q 'git_force_push' .claude/settings.json
+  grep -q 'git_reset_hard' .claude/settings.json
+  grep -q 'git_rebase' .claude/settings.json
+}
+
 @test "hooks install warns on existing non-cq hooks" {
   cd "$TEST_DIR"
   mkdir -p .claude

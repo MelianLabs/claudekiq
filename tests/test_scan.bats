@@ -242,6 +242,87 @@ EOF
   grep -q 'test-agent' .claude/cq.md
 }
 
+@test "scan discovers custom commands" {
+  mkdir -p .claude/commands
+  cat > .claude/commands/deploy.md <<'EOF'
+---
+name: deploy
+description: "Deploy to production"
+---
+
+Deploy command content.
+EOF
+  cat > .claude/commands/db-migrate.md <<'EOF'
+---
+description: "Run database migrations"
+---
+
+Migration content.
+EOF
+
+  run "$CQ" scan --json
+  [ "$status" -eq 0 ]
+
+  local cmd_count
+  cmd_count=$(echo "$output" | jq '.commands | length')
+  [ "$cmd_count" -ge 2 ]
+
+  # Check deploy command
+  local deploy_name
+  deploy_name=$(echo "$output" | jq -r '.commands[] | select(.name == "deploy") | .name')
+  [ "$deploy_name" = "deploy" ]
+
+  # Check db-migrate derives name from filename
+  local migrate_name
+  migrate_name=$(echo "$output" | jq -r '.commands[] | select(.name == "db-migrate") | .name')
+  [ "$migrate_name" = "db-migrate" ]
+
+  # Verify persisted in settings.json
+  local stored_count
+  stored_count=$(jq '.commands | length' .claudekiq/settings.json)
+  [ "$stored_count" -ge 2 ]
+}
+
+@test "scan discovers commands without frontmatter" {
+  mkdir -p .claude/commands
+  echo "Just a plain command file" > .claude/commands/simple-cmd.md
+
+  run "$CQ" scan --json
+  [ "$status" -eq 0 ]
+
+  local cmd_name
+  cmd_name=$(echo "$output" | jq -r '.commands[] | select(.name == "simple-cmd") | .name')
+  [ "$cmd_name" = "simple-cmd" ]
+}
+
+@test "scan validates workflows and reports warnings" {
+  # Create an invalid workflow
+  cat > .claudekiq/workflows/bad-workflow.yml <<'EOF'
+name: bad-workflow
+steps: []
+EOF
+
+  run "$CQ" scan --json
+  [ "$status" -eq 0 ]
+
+  local warnings
+  warnings=$(echo "$output" | jq '.workflow_warnings | length')
+  [ "$warnings" -ge 1 ]
+  echo "$output" | jq -r '.workflow_warnings[]' | grep -q "bad-workflow.yml"
+}
+
+@test "scan validates workflows reports no warnings for valid-only workflows" {
+  # Remove fixtures with agent references that fail validation
+  rm -f .claudekiq/workflows/with-agents.yml .claudekiq/workflows/with_routing.yml
+
+  run "$CQ" scan --json
+  [ "$status" -eq 0 ]
+
+  local warnings
+  warnings=$(echo "$output" | jq '.workflow_warnings | length')
+  [ "$warnings" -eq 0 ]
+}
+
 @test "schema scan returns valid JSON" {
   run "$CQ" schema scan
   [ "$status" -eq 0 ]

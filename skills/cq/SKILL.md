@@ -48,11 +48,15 @@ Parse the arguments passed to this skill:
      options: [{label: "<default if any>", description: "Use default"}, {label: "Custom value", description: "Enter a custom value"}])
    ```
 3. Run: `Bash(command: "cq start <name> --key=val... --json")` — capture the `run_id`
-4. **MANDATORY** — Create workflow Task:
-   ```
-   TaskCreate(name: "cq: <template> — <description>", description: "Running workflow <template> (run: <run_id>)")
-   ```
-   Save the returned `task_id` for later updates.
+4. **MANDATORY** — Create or resume workflow Task:
+   - First check: `Bash(command: "cq ctx get _task_id <run_id>")`
+   - If `_task_id` exists → use it for `TaskUpdate` (skip TaskCreate — handles session resume)
+   - If `_task_id` is empty → Create new:
+     ```
+     TaskCreate(name: "cq: <template> — <description>", description: "Running workflow <template> (run: <run_id>)")
+     ```
+   - After TaskCreate, store the ID: `Bash(command: "cq ctx set _task_id '<task_id>' <run_id>")`
+   Save the `task_id` for later updates.
 5. **MANDATORY** — Perform Session Start TODO Sync (see TODO Sync section below)
 6. Enter the **Runner Loop**
 
@@ -124,6 +128,7 @@ Bash(command: "<interpolated_target>")
 ```
 - Exit code 0 → outcome is `pass`
 - Exit code non-0 → outcome is `fail`
+- Capture stdout/stderr from the result for step-done reporting
 
 #### `agent`
 Dispatch to the `/cq-agent` sub-skill:
@@ -170,6 +175,10 @@ For non-parallel, non-workflow steps:
 ```
 Bash(command: "cq step-done <run_id> <step_id> <pass|fail> --json")
 ```
+
+For bash steps, include captured output (last 50 lines):
+- On pass: `Bash(command: "cq step-done <run_id> <step_id> pass --output='<last 50 lines of stdout>' --json")`
+- On fail: `Bash(command: "cq step-done <run_id> <step_id> fail --output='<last 50 lines of stdout>' --stderr='<last 50 lines of stderr>' --json")`
 
 **MANDATORY** — Update workflow Task progress:
 ```

@@ -253,6 +253,42 @@ teardown() {
   [ "$exit_code" -eq 2 ]
 }
 
+@test "_safety-check git_force_push blocks in strict mode" {
+  jq '.safety = "strict"' "$TEST_DIR/.claudekiq/settings.json" > "$TEST_DIR/.claudekiq/settings.json.tmp"
+  mv "$TEST_DIR/.claudekiq/settings.json.tmp" "$TEST_DIR/.claudekiq/settings.json"
+
+  local exit_code=0
+  "$CQ" _safety-check git_force_push 2>/dev/null || exit_code=$?
+  [ "$exit_code" -eq 2 ]
+}
+
+@test "_safety-check git_force_push warns in relaxed mode" {
+  jq '.safety = "relaxed"' "$TEST_DIR/.claudekiq/settings.json" > "$TEST_DIR/.claudekiq/settings.json.tmp"
+  mv "$TEST_DIR/.claudekiq/settings.json.tmp" "$TEST_DIR/.claudekiq/settings.json"
+
+  local exit_code=0
+  "$CQ" _safety-check git_force_push 2>/dev/null || exit_code=$?
+  [ "$exit_code" -eq 0 ]
+}
+
+@test "_safety-check git_reset_hard blocks in strict mode" {
+  jq '.safety = "strict"' "$TEST_DIR/.claudekiq/settings.json" > "$TEST_DIR/.claudekiq/settings.json.tmp"
+  mv "$TEST_DIR/.claudekiq/settings.json.tmp" "$TEST_DIR/.claudekiq/settings.json"
+
+  local exit_code=0
+  "$CQ" _safety-check git_reset_hard 2>/dev/null || exit_code=$?
+  [ "$exit_code" -eq 2 ]
+}
+
+@test "_safety-check git_rebase blocks in strict mode" {
+  jq '.safety = "strict"' "$TEST_DIR/.claudekiq/settings.json" > "$TEST_DIR/.claudekiq/settings.json.tmp"
+  mv "$TEST_DIR/.claudekiq/settings.json.tmp" "$TEST_DIR/.claudekiq/settings.json"
+
+  local exit_code=0
+  "$CQ" _safety-check git_rebase 2>/dev/null || exit_code=$?
+  [ "$exit_code" -eq 2 ]
+}
+
 @test "step state initializes with empty files array" {
   local run_id
   run_id=$(start_minimal)

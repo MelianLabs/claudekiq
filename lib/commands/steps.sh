@@ -7,13 +7,18 @@ cmd_step_done() {
   local outcome="${3:?Usage: cq step-done <run_id> <step_id> pass|fail}"
   local result_json="${4:-null}"
   local branches_json=""
+  local step_output="" step_stderr=""
 
-  # Check for --branches flag (for parallel step completion)
+  # Check for flags (--branches, --output, --stderr)
   shift 3 2>/dev/null || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --branches=*) branches_json="${1#*=}" ;;
       --branches) shift; branches_json="$1" ;;
+      --output=*) step_output="${1#*=}" ;;
+      --output) shift; step_output="$1" ;;
+      --stderr=*) step_stderr="${1#*=}" ;;
+      --stderr) shift; step_stderr="$1" ;;
       *) [[ -z "$result_json" || "$result_json" == "null" ]] && result_json="$1" ;;
     esac
     shift
@@ -38,7 +43,7 @@ cmd_step_done() {
     visits=$(jq --arg id "$step_id" '.[$id].visits // 1' "$(cq_run_dir "$run_id")/state.json")
     _handle_gate "$run_id" "$step_id" "$outcome" "$gate" "$visits"
   else
-    cq_with_lock "$run_dir" _step_done_locked "$run_id" "$step_id" "$outcome" "$result_json"
+    cq_with_lock "$run_dir" _step_done_locked "$run_id" "$step_id" "$outcome" "$result_json" "$step_output" "$step_stderr"
   fi
 
   # Propagate to parent if this is a sub-workflow completing
@@ -90,6 +95,7 @@ _propagate_to_parent() {
 
 _step_done_locked() {
   local run_id="$1" step_id="$2" outcome="$3" result_json="$4"
+  local step_output="${5:-}" step_stderr="${6:-}"
   local run_dir
   run_dir=$(cq_run_dir "$run_id")
 
@@ -120,14 +126,26 @@ _step_done_locked() {
     --argjson result_json "$result_json" \
     '.[$id].status = $status | .[$id].visits = $visits | .[$id].result = $result |
      .[$id].finished_at = $finished_at | .[$id].result_data = $result_json' <<< "$state")
+
+  # Store output/stderr in state if provided
+  if [[ -n "$step_output" ]]; then
+    state=$(jq --arg id "$step_id" --arg out "$step_output" \
+      '.[$id].output = $out' <<< "$state")
+  fi
+  if [[ -n "$step_stderr" ]]; then
+    state=$(jq --arg id "$step_id" --arg err "$step_stderr" \
+      '.[$id].error_output = $err' <<< "$state")
+  fi
+
   cq_write_json "${run_dir}/state.json" "$state"
 
-  # Log step completion (include file tracking if available)
+  # Log step completion (include file tracking and truncated output if available)
   local step_files
   step_files=$(jq --arg id "$step_id" '.[$id].files // []' <<< "$state")
+  local log_output="${step_output:0:500}"
   cq_log_event "$run_dir" "step_done" \
-    "$(jq -cn --arg step "$step_id" --arg result "$outcome" --argjson visits "$visits" --argjson files "$step_files" \
-      '{step:$step, result:$result, visits:$visits, files:$files}')"
+    "$(jq -cn --arg step "$step_id" --arg result "$outcome" --argjson visits "$visits" --argjson files "$step_files" --arg output "$log_output" \
+      '{step:$step, result:$result, visits:$visits, files:$files} + (if $output != "" then {output:$output} else {} end)')"
 
   # Extract outputs if step defines them
   _extract_outputs "$run_id" "$step_id" "$result_json"
