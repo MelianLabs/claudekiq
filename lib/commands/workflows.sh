@@ -144,14 +144,14 @@ cmd_workflows_validate() {
     fi
   done <<< "$model_errors"
 
-  # Check step types against known types + plugins
+  # Check step types against known types + agents — unknown types are errors
   local stype
   while IFS= read -r stype; do
     [[ -z "$stype" ]] && continue
     local kind
     kind=$(cq_resolve_step_type "$stype")
-    if [[ "$kind" == "convention" ]]; then
-      cq_info "INFO: Step type '${stype}' will be treated as convention-based agent step"
+    if [[ "$kind" == "unknown" ]]; then
+      errors+=("Step type '${stype}' is not a built-in type or known agent. Define an agent at .claude/agents/${stype}.md or run 'cq scan' to refresh.")
     fi
   done <<< "$(jq -r '.steps[].type // empty' <<< "$wf_json" | sort -u)"
 

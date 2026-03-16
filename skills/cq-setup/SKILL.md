@@ -1,6 +1,6 @@
 ---
 name: cq-setup
-description: "Smart project setup — discovers agents, skills, stacks, and commands in your project. Helps you understand what's available and optionally create workflows."
+description: "Smart project setup — discovers agents, skills, stacks, and commands. Helps define workflows. Called internally by /cq setup."
 allowed-tools: Bash, Read, Glob, Grep, Write, AskUserQuestion
 ---
 
@@ -9,7 +9,7 @@ allowed-tools: Bash, Read, Glob, Grep, Write, AskUserQuestion
 ## Prerequisites
 If any required tool is unavailable, report the error clearly and suggest running via CLI instead.
 
-You discover what's available in a project and help users set up cq workflows.
+You discover what's available in a project and help users set up cq workflows. You are called internally by `/cq setup` — users don't invoke you directly.
 
 ## Step 0: Ensure Initialized
 
@@ -42,40 +42,35 @@ Show the user a comprehensive summary of what was found:
 
 **Custom Commands**: List any slash commands found.
 
-**Existing Workflows**: Run `cq workflows list --json` and show any already-defined workflows.
+## Step 3: Check for Existing Workflows
 
-## Step 3: Suggest Agent Mappings
+Run `cq workflows list --json` to find workflows already defined (possibly committed by teammates).
+
+**If workflows exist**: Present the list to the user with descriptions. Ask if they want to define additional workflows or if they're good with what exists.
+
+**If no workflows exist**: Proceed to Step 4.
+
+## Step 4: Suggest Agent Mappings
 
 Compare detected stacks against available agents:
 1. For each stack (e.g., `rails`), check if `@rails-dev` agent exists
 2. If missing, suggest creating an agent mapping or agent file
 3. Write any agreed mappings to `.claudekiq/settings.json` under `agent_mappings`
 
-## Step 4: Offer Workflow Creation (Optional)
+## Step 5: Guide First Workflow Creation
 
-Ask if the user wants help creating workflows:
+Ask what kind of workflow to create first:
 
 ```
 AskUserQuestion(
-  question: "Would you like to create workflows for this project?",
-  options: [
-    {label: "Yes", description: "I'll help you create customized workflows based on your project"},
-    {label: "No", description: "Skip — I'll create workflows manually later"}
-  ]
-)
-```
-
-If yes, ask what kinds of workflows they need:
-```
-AskUserQuestion(
-  question: "What workflows would you like to create?",
+  question: "What workflow would you like to create first?",
   options: [
     {label: "feature", description: "Plan, implement, test, review, commit"},
     {label: "bugfix", description: "Investigate, fix, test, commit"},
     {label: "deploy", description: "Build, test, deploy with approval gates"},
-    {label: "ci", description: "Lint, test, build pipeline"}
-  ],
-  multiSelect: true
+    {label: "ci", description: "Lint, test, build pipeline"},
+    {label: "custom", description: "I'll describe what I need"}
+  ]
 )
 ```
 
@@ -95,19 +90,35 @@ AskUserQuestion(
          type: bash
          target: "npm test"
    ```
-4. **Use `prompt` for agent/skill steps** — raw prompts, no interpolation
+4. **Use `prompt` for agent steps** — raw prompts, no interpolation
 5. **Set appropriate gates** — `human` for risky steps (deploy, commit, push), `review` for tests with retry, `auto` for safe steps
 6. **Test-fix loops** — `review` gate with `max_visits: 3`, `on_fail` → fix step → back to test
 7. **Use `extends`** for related workflows sharing common steps
+8. **All step types must be explicit** — use only built-in types (`bash`, `agent`, `skill`, `batch`, `workflow`) or agents that exist in `.claude/agents/`. Do NOT use convention-based custom type names.
 
-## Step 5: Validate
+## Step 6: Ask About More Workflows
 
-After writing each workflow:
+After the first workflow is created and validated:
+
+```
+AskUserQuestion(
+  question: "Workflow created! Would you like to define another workflow?",
+  options: [
+    {label: "Yes", description: "Create another workflow"},
+    {label: "No", description: "I'm done for now"}
+  ]
+)
+```
+
+If yes, go back to Step 5. If no, proceed to Step 7.
+
+## Step 7: Validate All Workflows
+
 ```
 Bash(command: "cq workflows validate .claudekiq/workflows/<name>.yml")
 ```
 
-## Step 6: Summary
+## Step 8: Summary
 
 Tell the user:
 - What was discovered (agents, stacks, skills, commands)

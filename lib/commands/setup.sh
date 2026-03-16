@@ -33,13 +33,16 @@ cmd_init() {
     local gitignore="${project_dir}/.gitignore"
     local needs_private=true
     local needs_runs=true
+    local needs_active_runs=true
     if [[ -f "$gitignore" ]]; then
       grep -qF '.claudekiq/workflows/private/' "$gitignore" && needs_private=false
       grep -qF '.claudekiq/runs/' "$gitignore" && needs_runs=false
+      grep -qF '.claudekiq/.active_runs' "$gitignore" && needs_active_runs=false
     fi
     {
       $needs_private && echo '.claudekiq/workflows/private/'
       $needs_runs && echo '.claudekiq/runs/'
+      $needs_active_runs && echo '.claudekiq/.active_runs'
     } >> "$gitignore"
   fi
 
@@ -92,7 +95,7 @@ _init_discovery_hints() {
   if [[ "$workflows_found" -gt 0 ]]; then
     cq_info "${workflows_found} workflow(s) available. Run /cq to start one."
   else
-    cq_hint "Run /cq-setup to generate customized workflows for this project."
+    cq_hint "Run /cq setup to discover your project and create customized workflows."
   fi
 }
 
@@ -111,10 +114,11 @@ _install_plugin_json() {
   fi
 
   # Build new plugin.json with CQ_VERSION and merge user skills
+  # Only /cq is user-facing; other skills are internal (invoked programmatically)
   jq -cn --arg home "$cq_home" --arg ver "$CQ_VERSION" --argjson user_skills "$user_skills" '{
     name:"claudekiq", version:$ver,
     description:"Filesystem-backed workflow engine for Claude Code",
-    skills:([($home+"/skills/cq"),($home+"/skills/cq-runner"),($home+"/skills/cq-approve"),($home+"/skills/cq-worker"),($home+"/skills/cq-setup")] + $user_skills)
+    skills:([($home+"/skills/cq")] + $user_skills)
   }' > "${plugin_dir}/plugin.json"
 }
 
@@ -197,6 +201,13 @@ _hooks_install() {
   mkdir -p "${project_dir}/.claude"
 
   # Define cq hooks (matcher + hooks[] format)
+  # Only hooks that Claude Code doesn't already handle:
+  #   - Protect .claudekiq/runs/ from direct edits
+  #   - Block git checkout during active workflows
+  #   - Protect .claudekiq/ directory from deletion
+  #   - Stage context for active workflow steps
+  #   - Capture agent output
+  #   - Auto-init in worktrees
   local cq_hooks
   cq_hooks=$(cat <<'HOOKS_JSON'
 {
@@ -218,7 +229,7 @@ _hooks_install() {
       "hooks": [
         {
           "type": "command",
-          "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); rc=0; case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) cq _safety-check rm_claudekiq; rc=$?;; *\"git checkout\"*|*\"git switch\"*) cq _safety-check git_checkout; rc=$?;; *\"git commit\"*) echo \"$input\" | cq _safety-check git_commit; rc=$?;; *\"git push\"*\"--force\"*|*\"git push\"*\"-f \"*) cq _safety-check git_force_push; rc=$?;; *\"git reset\"*\"--hard\"*) cq _safety-check git_reset_hard; rc=$?;; *\"git rebase\"*) cq _safety-check git_rebase; rc=$?;; esac; exit $rc'"
+          "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); rc=0; case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) cq _safety-check rm_claudekiq; rc=$?;; *\"git checkout\"*|*\"git switch\"*) cq _safety-check git_checkout; rc=$?;; esac; exit $rc'"
         }
       ]
     },
@@ -498,7 +509,7 @@ _generate_cq_md() {
         echo "$line"
       done
     fi
-    $found_workflow || echo '_No workflows defined yet. Run /cq-setup to discover your project and create workflows._'
+    $found_workflow || echo '_No workflows defined yet. Run `/cq setup` to discover your project and create workflows._'
     echo ''
 
     # Detected stacks (compact)
@@ -521,16 +532,10 @@ _generate_cq_md() {
       fi
     fi
 
-    # Skills
-    echo '## Skills'
-    echo '- `/cq` — Start, resume, and monitor workflows'
-    echo '- `/cq-runner` — Execute workflow steps (called by /cq)'
-    echo '- `/cq-approve` — Handle approval gates (called by /cq-runner)'
-    echo '- `/cq-worker` — Execute agent steps (called by /cq-runner)'
-    echo '- `/cq-setup` — Discover project capabilities and create workflows'
-    echo ''
-
-    # Quick start
-    echo 'Start: `/cq <name>` | Interactive: `/cq` | Status: `/cq status` | Details: `cq workflows show <name>`'
+    # Usage
+    echo '## Usage'
+    echo '`/cq` — Interactive workflow picker | `/cq <name>` — Start workflow | `/cq status` — Dashboard'
+    echo '`/cq init` — Initialize project | `/cq setup` — Discover project and create workflows'
+    echo '`/cq approve` — Handle pending gates | `cq workflows show <name>` — View workflow details'
   } > "$cq_md"
 }

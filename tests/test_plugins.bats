@@ -45,20 +45,20 @@ teardown() { teardown_test_project; }
   [ "$result" = "agent" ]
 }
 
-@test "resolve_step_type returns convention for missing type" {
+@test "resolve_step_type returns unknown for missing type" {
   source "$CQ_ROOT/lib/core.sh"
   export CQ_PROJECT_ROOT="$TEST_DIR"
 
   result=$(cq_resolve_step_type "nonexistent")
-  [ "$result" = "convention" ]
+  [ "$result" = "unknown" ]
 }
 
-@test "resolve_step_type returns convention for custom type like review" {
+@test "resolve_step_type returns unknown for unregistered custom type" {
   source "$CQ_ROOT/lib/core.sh"
   export CQ_PROJECT_ROOT="$TEST_DIR"
 
   result=$(cq_resolve_step_type "review")
-  [ "$result" = "convention" ]
+  [ "$result" = "unknown" ]
 }
 
 @test "resolve_step_type checks scan results for agent" {
@@ -75,7 +75,7 @@ teardown() { teardown_test_project; }
 
 # --- Workflow validation with custom types ---
 
-@test "workflows validate treats unknown type as convention-based" {
+@test "workflows validate errors on unknown step type" {
   cat > .claudekiq/workflows/custom-type.yml <<'YAML'
 name: custom-type-test
 description: Test custom step types
@@ -87,7 +87,7 @@ steps:
 YAML
 
   run "$CQ" workflows validate .claudekiq/workflows/custom-type.yml
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
 }
 
 @test "workflows validate passes with agent-backed custom type" {

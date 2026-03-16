@@ -43,15 +43,14 @@ From the step definition, extract:
 Pass raw prompt + context to the agent. Claude decides how to execute.
 
 1. Start with the step's `prompt` field as-is (no `{{variable}}` interpolation)
-2. If the step type is not `agent` but a convention name (e.g., `review`, `deploy`, `migrate`), prepend semantic context: "You are performing a <type>." to guide the agent's behavior
-3. If `context` array is defined, append a "Context" section with each key's raw value from the run context
-4. If no `prompt` field, fall back to `args_template` (backward compat)
-5. If neither exists but `target` starts with `@`, use the step `name` as a minimal prompt
+2. If `context` array is defined, append a "Context" section with each key's raw value from the run context
+3. If no `prompt` field, fall back to `args_template` (backward compat)
+4. If neither exists but `target` starts with `@`, use the step `name` as a minimal prompt
 
-6. If the step has a `context_builders` array defined, resolve built-in context:
+5. If the step has a `context_builders` array defined, resolve built-in context:
    `Bash(command: "cq _resolve-context <run_id> <step_id>")`
    Append the output to the assembled prompt.
-7. If `state.<step_id>.visits > 0` and `state.<step_id>.error_output` exists (this is a retry):
+6. If `state.<step_id>.visits > 0` and `state.<step_id>.error_output` exists (this is a retry):
    Include in the prompt: "Previous attempt failed with: <error_output>"
 
 The assembled prompt gives the agent everything it needs to work autonomously.

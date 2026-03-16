@@ -33,7 +33,7 @@ Bash(command: "cq status <run_id> --json")
 Key fields: `meta.status`, `meta.current_step`, `steps[]`, `state{}`, `ctx{}`
 
 ### 2. Check Terminal States
-- `completed`, `failed`, `cancelled` → **Return** to caller (`/cq` handles TaskUpdate and final reporting)
+- `completed`, `failed`, `cancelled` → **Return** to caller (`/cq` handles final reporting)
 - `blocked` → Report to caller and return
 - `queued` → Report queued status and return
 - `paused` → Report paused status and return
@@ -55,7 +55,7 @@ Bash(command: "<interpolated_target>")
 - Exit 0 → `pass`, non-0 → `fail`
 - Capture stdout/stderr for step-done
 
-#### `agent` (or convention-based custom type)
+#### `agent`
 ```
 Skill(name: "cq-worker", args: "<run_id> <step_id>")
 ```
@@ -69,13 +69,24 @@ Skill(name: "<target>", args: "<prompt>")
 Determine outcome from the skill's response.
 
 #### `parallel` or `batch`
-Delegate to Claude Code's built-in `/batch`:
+Based on `strategy` field (default: `batch`):
+
+**Strategy `batch`** (structured, via Claude Code's `/batch`):
 1. Read `branches[]` from step definition
 2. Format each branch as a task description including its type, target/prompt
 3. `Skill(name: "batch", args: "<formatted branch descriptions>")`
 4. Map results to branch outcomes JSON: `{"branch_id": {"status":"passed","result":"pass"}, ...}`
 5. `Bash(command: "cq step-done <run_id> <step_id> pass|fail --branches='<json>' --json")`
 6. Skip to step 6 (Re-read)
+
+**Strategy `managed`** (flexible, Claude manages parallel execution):
+1. Read `branches[]` from step definition
+2. Run all branch tasks in parallel using multiple concurrent tool calls
+3. For each branch: execute based on type (bash→Bash, agent→Agent, skill→Skill)
+4. Collect results from all branches
+5. Map results to branch outcomes JSON
+6. `Bash(command: "cq step-done <run_id> <step_id> pass|fail --branches='<json>' --json")`
+7. Skip to step 6 (Re-read)
 
 #### `workflow` (sub-workflow)
 1. Read `template`, `context_map` from step definition
@@ -94,11 +105,10 @@ For bash steps, include captured output:
 - Pass: `--output='<last 50 lines>'`
 - Fail: `--output='<stdout>' --stderr='<stderr>'`
 
-**MANDATORY** — Update Task progress:
+**Task progress (fire-and-forget)** — best-effort, do not fail if this errors:
 ```
-TaskUpdate(id: <task_id>, status: "in_progress", description: "Step <n>/<total>: <next_step_name>")
+TaskUpdate(status: "in_progress", description: "Step <n>/<total>: <next_step_name>")
 ```
-Get `task_id` via: `Bash(command: "cq ctx get _task_id <run_id>")`
 
 ### 6. Re-read and Loop
 The `cq step-done` command handles gate logic:
@@ -127,3 +137,4 @@ When a tool call fails during step execution:
 - Never talk to the user directly — delegate gates to `/cq-approve`
 - For agent steps: always dispatch to `/cq-worker`
 - For bash steps: run exactly the interpolated command
+- Task updates are fire-and-forget — do not track task_id in context

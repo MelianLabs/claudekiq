@@ -14,6 +14,7 @@ cmd_pause() {
     running|queued|gated)
       cq_update_meta "$run_id" '.status = "paused"'
       cq_log_event "$run_dir" "run_paused" '{}'
+      cq_update_active_runs_index
       # Cascade pause to child runs
       _cascade_to_children "$run_id" "pause"
       cq_json_out --arg id "$run_id" '{run_id:$id, status:"paused"}' || \
@@ -38,6 +39,7 @@ cmd_resume() {
 
   cq_update_meta "$run_id" '.status = "running"'
   cq_log_event "$run_dir" "run_resumed" '{}'
+  cq_update_active_runs_index
 
   local current_step
   current_step=$(jq -r '.current_step // ""' <<< "$meta")
@@ -63,6 +65,7 @@ cmd_cancel() {
     *)
       cq_update_meta "$run_id" '.status = "cancelled"'
       cq_log_event "$run_dir" "run_cancelled" '{}'
+      cq_update_active_runs_index
       # Cascade cancel to child runs
       _cascade_to_children "$run_id" "cancel"
       cq_json_out --arg id "$run_id" '{run_id:$id, status:"cancelled"}' || {
@@ -97,6 +100,7 @@ cmd_retry() {
   fi
 
   cq_update_meta "$run_id" '.status = "running"'
+  cq_update_active_runs_index
   cq_log_event "$run_dir" "run_retried" \
     "$(jq -cn --arg step "$current_step" '{step:$step}')"
 

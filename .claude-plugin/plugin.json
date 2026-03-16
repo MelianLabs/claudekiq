@@ -1,8 +1,8 @@
 {
   "name": "claudekiq",
-  "version": "3.1.3",
+  "version": "3.2.7",
   "description": "Filesystem-backed workflow engine for Claude Code",
   "author": "MelianLabs",
   "homepage": "https://github.com/MelianLabs/claudekiq",
-  "skills": ["../skills/cq", "../skills/cq-worker", "../skills/cq-setup"]
+  "skills": ["../skills/cq"]
 }

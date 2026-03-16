@@ -53,7 +53,7 @@ bash install.sh
 
 ```bash
 cq version
-# cq 3.2.5
+# cq 3.2.7
 ```
 
 ## Getting Started

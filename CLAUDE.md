@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Claudekiq (`cq`) is a filesystem-backed workflow engine CLI for Claude Code. It orchestrates multi-step development workflows by coordinating AI agents, shell commands, and human approval gates. Written in Bash with `jq` and `yq` as dependencies.
+Claudekiq (`cq`) is a filesystem-backed workflow engine CLI for Claude Code. It orchestrates multi-step development workflows by coordinating AI agents, shell commands, and human approval gates. Written in Bash with `jq` and `yq` as dependencies. Designed as a **thin orchestration layer** that delegates everything possible to Claude Code.
 
 ## Running Tests
 
@@ -30,6 +30,17 @@ Tests use a shared `tests/setup.bash` that creates a temp directory, runs `cq in
 5. `lib/schema.sh` — AI-discoverable JSON schemas for every command
 
 Command dispatch is a case statement in `cq` that maps command names to `cmd_*` functions.
+
+### Skill Architecture
+
+**`/cq` is the only user-facing skill.** All other skills are internal implementation details:
+- `/cq` — Entry point: start, resume, monitor, init, setup, approve
+- `/cq-runner` — Internal: step execution loop (called by `/cq`)
+- `/cq-approve` — Internal: gate handling (called by `/cq-runner`)
+- `/cq-worker` — Internal: agent step execution (called by `/cq-runner`)
+- `/cq-setup` — Internal: project discovery and workflow creation (called by `/cq setup`)
+
+Only `/cq` is listed in `.claude-plugin/plugin.json`. Internal skills are invoked programmatically via `Skill()`.
 
 ### Command Modules (`lib/commands/`)
 
@@ -57,10 +68,13 @@ All run state lives in `.claudekiq/runs/<run_id>/` (gitignored):
 - `steps.json` — resolved step definitions
 - `log.jsonl` — append-only event log
 
+Active runs index: `.claudekiq/.active_runs` — lightweight file listing active run IDs for fast hook lookups.
+
 ### Key Concepts
 
-- **Step types**: `bash`, `agent`, `skill`, `batch`, `parallel` (built-in), plus convention-based custom types (any unrecognized type name is treated as an agent step with semantic context). `batch` delegates to Claude Code's `/batch` for parallel execution; `parallel` is a deprecated alias for `batch`.
-- **Gates**: `auto` (continue), `human` (wait for approval via `AskUserQuestion` — replaces old `manual` type), `review` (retry loop with max_visits escalation)
+- **Step types**: `bash`, `agent`, `skill`, `batch`, `parallel` (built-in). Unknown step types are **errors** — convention-based custom types are no longer supported. All step types must be either built-in or resolve to a known agent file. `batch` delegates to Claude Code's `/batch` for parallel execution; `parallel` is a deprecated alias for `batch`.
+- **Parallel strategies**: `batch` (structured, via `/batch` skill) or `managed` (Claude manages parallel execution directly)
+- **Gates**: `auto` (continue), `human` (wait for approval via `AskUserQuestion`), `review` (retry loop with max_visits escalation)
 - **Interpolation**: `{{expr}}` in bash targets only, resolved from context via jq. Agent steps receive raw prompt + context — Claude decides how to use it. Supports nested access (`{{config.timeout}}`), array indexing (`{{items[0].name}}`), and jq expressions (`{{results | length}}`).
 - **Config resolution**: global (`~/.cq/config.json`) merged with project (`.claudekiq/settings.json`), project wins
 - **Agent mappings**: stored in `.claudekiq/settings.json` under `agent_mappings` key
@@ -71,23 +85,24 @@ All run state lives in `.claudekiq/runs/<run_id>/` (gitignored):
 
 `cq init` creates `.claudekiq/` structure, installs hooks, scans project, and outputs context-aware discovery hints:
 - `.claudekiq/` directory structure (workflows, runs, settings.json)
-- `.claude-plugin/plugin.json` pointing to `~/.cq/skills/` (version auto-synced from `$CQ_VERSION`, user-added skills preserved on re-init)
+- `.claude-plugin/plugin.json` listing only `/cq` skill (version auto-synced from `$CQ_VERSION`, user-added skills preserved on re-init)
 - `.gitignore` entries
 - Smart output: reports discovered agents, stacks, and available workflows
 - JSON output includes `agents_found`, `stacks_found`, `workflows_found` counts
 
-Hooks are auto-installed into `.claude/settings.json`. Skills are served via the `.claude-plugin/plugin.json` plugin system from `~/.cq/skills/`.
+Hooks are auto-installed into `.claude/settings.json`. The `/cq` skill is served via the `.claude-plugin/plugin.json` plugin system from `~/.cq/skills/`.
 
-`/cq-setup` is self-contained: it auto-initializes if `cq init` hasn't been run yet.
+`/cq setup` is the user-facing command for project discovery and workflow creation.
 
 ### Hooks System (`cq hooks`)
 
-Hooks are auto-installed by `cq init`:
-- Merges cq-specific hooks into `.claude/settings.json` (SessionEnd, PreToolUse, PostToolUse, WorktreeCreate)
-- Smart conflict detection: warns when existing non-cq hooks use the same matcher
-- `cq hooks uninstall` cleanly removes only cq hooks
-- Configurable notification commands in `.claudekiq/settings.json` → `notifications`: `on_start`, `on_gate`, `on_fail`, `on_complete`
-- `cq_fire_hook()` emits structured JSON events with version, status, and timestamp to stderr
+Hooks are auto-installed by `cq init`. Only hooks that Claude Code doesn't already handle:
+- **PreToolUse**: Protect `.claudekiq/runs/` from direct edits, block `git checkout` during active workflows, protect `.claudekiq/` from deletion
+- **PostToolUse**: Stage context for active workflow steps, capture agent output, desktop notifications
+- **SessionEnd**: Check for stale runs
+- **WorktreeCreate**: Auto-init cq in new worktrees
+
+Safety hooks for git operations (force-push, reset --hard, rebase, commit) are delegated to Claude Code's built-in safety model.
 
 ### Project Discovery (`cq scan`)
 
@@ -107,13 +122,13 @@ Hooks are auto-installed by `cq init`:
 
 Agents are named after their stack: `@rails-dev`, `@react-dev`, `@go-dev`, etc. This convention replaces the generic `@implementer` pattern and makes agent purpose clear in workflows.
 
-### Custom Step Types
+### Step Type Resolution
 
-Custom step types resolve via `cq_resolve_step_type()` in `lib/core.sh`:
-1. Built-in types (`bash`, `agent`, `skill`) → returns `"builtin"`
+Step types resolve via `cq_resolve_step_type()` in `lib/core.sh`:
+1. Built-in types (`bash`, `agent`, `skill`, `batch`, `parallel`, `workflow`) → returns `"builtin"`
 2. Agent-backed: `.claude/agents/<type>.md` file exists → returns `"agent"`
 3. Scan results: `agents` array in settings.json → returns `"agent"`
-4. Otherwise: returns `"convention"` (treated as agent step with type name as semantic context)
+4. Otherwise: returns `"unknown"` — **this is an error**. All step types must be explicitly defined.
 
 ### Step Output Capture
 
@@ -125,36 +140,37 @@ Custom step types resolve via `cq_resolve_step_type()` in `lib/core.sh`:
 
 ### Context Builders
 
-Agent steps can define `context_builders` to automatically gather context before dispatch:
+Agent steps can define `context_builders` to automatically gather context before dispatch. Each builder supports optional `max_lines` to override defaults:
 
 ```yaml
 context_builders:
-  - type: git_diff          # git diff HEAD output (200 lines max)
-  - type: file_contents     # requires paths: ["file1", "file2"]
+  - type: git_diff          # git diff HEAD output (default: 200 lines)
+  - type: file_contents     # requires paths: ["file1", "file2"] (default: 100 lines per file)
     paths: ["src/app.ts"]
-  - type: error_context     # previous step error_output from state.json
-  - type: test_output       # requires command: "npm test"
+    max_lines: 50           # optional: override default
+  - type: error_context     # previous step error_output (default: 100 lines)
+  - type: test_output       # requires command (default: 50 lines)
     command: "npm test 2>&1 | tail -50"
-  - type: command_output    # requires command: "some command"
+  - type: command_output    # requires command (default: 50 lines)
     command: "echo hello"
 ```
+
+Global override: `cq config set context_builder_max_lines 150`
 
 Resolved via `cq _resolve-context <run_id> <step_id>`. Implementation in `cq_resolve_context_builders()` in `lib/core.sh`.
 
 ### Context File (`.claude/cq.md`)
 
-`cq init` and `cq scan` generate `.claude/cq.md` with comprehensive project context:
-- Available workflows with step summaries (step names, gate types, params)
-- Detected agents, stacks, skills, and custom commands
-- Usage patterns (start, monitor, approve, skip, cancel)
-- Team workflow notes (concurrency, agents)
-- Notification config visibility
+`cq init` and `cq scan` generate `.claude/cq.md` with concise project context:
+- Available workflows with descriptions and params
+- Detected agents and stacks
+- Usage patterns (`/cq`, `/cq setup`, `/cq status`)
 
 Claude Code loads this automatically so it always knows the project's workflow capabilities.
 
 ### Safety Configuration
 
-The `safety` config key controls hook behavior. Supports both simple string and per-operation policy map:
+The `safety` config key controls hook behavior for cq-specific operations. Only operations Claude Code doesn't handle natively:
 
 **Simple (backward-compatible):**
 - `"strict"` (default) — hooks block dangerous operations (exit 2)
@@ -164,7 +180,6 @@ The `safety` config key controls hook behavior. Supports both simple string and 
 ```json
 {
   "safety": {
-    "git_commit": "block",
     "git_checkout": "block",
     "rm_claudekiq": "block",
     "edit_run_files": "warn"
@@ -172,13 +187,9 @@ The `safety` config key controls hook behavior. Supports both simple string and 
 }
 ```
 
-Set via: `cq config set safety relaxed` or `cq config set safety.git_commit warn`
+Set via: `cq config set safety relaxed` or `cq config set safety.git_checkout warn`
 
-Safety checks are centralized in `cq _safety-check <operation>` (called by hooks).
-
-Supported operations: `rm_claudekiq`, `git_checkout`, `git_commit`, `edit_run_files`, `git_force_push`, `git_reset_hard`, `git_rebase`
-
-For parallel batch processing, use Claude Code's built-in `/batch` skill.
+Supported cq-specific operations: `rm_claudekiq`, `git_checkout`, `edit_run_files`
 
 ### Workflow Inheritance (`extends`)
 
@@ -193,6 +204,7 @@ Workflows can inherit from a base workflow using `extends: <base-name>`:
 ### Enhanced Validation (`cq workflows validate`)
 
 Beyond basic schema checks, validation detects:
+- **Unknown step types** — step types that are not built-in or known agents are errors
 - **Circular routing** — cycles without gates (infinite loop risk); gated cycles allowed
 - **Missing context variables** — `{{var}}` in bash steps not declared in defaults/params
 - **Unreachable steps** — steps not reachable from the first step via any route
@@ -211,9 +223,9 @@ Hints are suppressed in `--json` mode. Helper: `cq_hint()` in `lib/core.sh`.
 
 ### Skill Integration with Claude Code
 
-Skills (`/cq`, `/cq-runner`, `/cq-approve`, `/cq-worker`, `/cq-setup`) use precise tool call patterns for reliable Claude Code integration:
-- **Task mirroring**: MANDATORY TaskCreate on workflow start, TaskUpdate on step progress/completion
-- **TODO sync**: Lazy sync at explicit points — session start, gate events, workflow completion
+**Task mirroring is fire-and-forget**: TaskCreate/TaskUpdate calls are best-effort UI projections. `meta.json` is the source of truth. No `_task_id` is stored in context.
+
+- **TODO sync**: Filesystem TODOs are the persistent source of truth (survives across sessions). Native TodoRead/TodoWrite is a session-scoped UI projection synced lazily.
 - **Gates**: Exact AskUserQuestion patterns with options for approve/reject/override
 - **Agent dispatch**: Exact Agent tool call with subagent_type, model, isolation parameters
 - **Error recovery**: Log errors to context, mark step failed, continue runner loop

@@ -26,7 +26,8 @@ teardown() {
   "$CQ" init >/dev/null
   [ -f .claude-plugin/plugin.json ]
   jq -e '.name == "claudekiq"' .claude-plugin/plugin.json
-  jq -e '.skills | length == 5' .claude-plugin/plugin.json
+  # Only /cq is user-facing; internal skills are not listed
+  jq -e '.skills | length == 1' .claude-plugin/plugin.json
 }
 
 @test "plugin.json version matches CQ_VERSION" {
@@ -46,14 +47,15 @@ teardown() {
   mv .claude-plugin/plugin.json.tmp .claude-plugin/plugin.json
   local count_before
   count_before=$(jq '.skills | length' .claude-plugin/plugin.json)
-  [ "$count_before" -eq 6 ]
+  # 1 cq skill + 1 user skill = 2
+  [ "$count_before" -eq 2 ]
   # Re-init
   "$CQ" init >/dev/null
   # User skill should be preserved
   jq -e '.skills | any(. == "/custom/my-skill")' .claude-plugin/plugin.json
   local count_after
   count_after=$(jq '.skills | length' .claude-plugin/plugin.json)
-  [ "$count_after" -eq 6 ]
+  [ "$count_after" -eq 2 ]
 }
 
 @test "init does not create .claude/skills" {
@@ -241,12 +243,12 @@ AGENT
   echo "$output" | jq -e '.agents_found != null'
 }
 
-@test "cq.md includes skills section" {
+@test "cq.md includes usage section" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null
-  grep -q 'Skills' .claude/cq.md
-  grep -q 'cq-runner' .claude/cq.md
-  grep -q 'cq-approve' .claude/cq.md
+  grep -q 'Usage' .claude/cq.md
+  grep -q '/cq' .claude/cq.md
+  grep -q '/cq setup' .claude/cq.md
 }
 
 @test "cq.md includes workflow names when workflows exist" {
@@ -264,12 +266,17 @@ AGENT
   grep -q 'status' .claude/cq.md
 }
 
-@test "hooks detect git force-push pattern" {
+@test "hooks detect cq-specific safety patterns" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null
-  grep -q 'git_force_push' .claude/settings.json
-  grep -q 'git_reset_hard' .claude/settings.json
-  grep -q 'git_rebase' .claude/settings.json
+  # Only cq-specific safety: rm_claudekiq, git_checkout, edit_run_files
+  grep -q 'rm_claudekiq' .claude/settings.json
+  grep -q 'git_checkout' .claude/settings.json
+  grep -q 'edit_run_files' .claude/settings.json
+  # Git safety (force-push, reset, rebase) is delegated to Claude Code
+  ! grep -q 'git_force_push' .claude/settings.json
+  ! grep -q 'git_reset_hard' .claude/settings.json
+  ! grep -q 'git_rebase' .claude/settings.json
 }
 
 @test "hooks install warns on existing non-cq hooks" {

@@ -154,6 +154,9 @@ cmd_start() {
   # Fire on_start hook
   cq_fire_hook "on_start" "$run_dir"
 
+  # Update active runs index
+  cq_update_active_runs_index
+
   if cq_json_out --arg id "$run_id" --arg status "$initial_status" --arg template "$template" \
     '{run_id:$id, status:$status, template:$template}'; then
     :

@@ -228,6 +228,7 @@ _handle_gate() {
         cq_update_meta "$run_id" '.status = "gated"'
         cq_log_event "$run_dir" "gate_human" \
           "$(jq -cn --arg step "$step_id" '{step:$step}')"
+        cq_update_active_runs_index
         cq_info "$(cq_marker "gated") Waiting for human approval at step '${step_id}'"
         cq_hint "Workflow gated at step '${step_id}'. Use AskUserQuestion to prompt the user for approval."
       fi
@@ -260,6 +261,7 @@ _handle_review_failure() {
   if [[ "$max_visits" -gt 0 && "$visits" -ge "$max_visits" ]]; then
     if [[ "$CQ_HEADLESS" == "true" ]]; then
       cq_update_meta "$run_id" '.status = "failed"'
+      cq_update_active_runs_index
       cq_log_event "$run_dir" "run_failed" \
         "$(jq -cn --arg step "$step_id" '{step:$step, reason:"max_visits_exceeded_headless"}')"
       cq_fire_hook "on_fail" "$run_dir"
@@ -295,6 +297,7 @@ _advance_run() {
     cq_update_meta "$run_id" '.status = "completed" | .current_step = null'
     cq_log_event "$run_dir" "run_completed" '{}'
     cq_fire_hook "on_complete" "$run_dir"
+    cq_update_active_runs_index
     cq_info "$(cq_marker "passed") Workflow completed (run ${run_id})"
     cq_hint "Workflow completed. Update the workflow Task to completed via TaskUpdate."
   else

@@ -25,6 +25,14 @@ teardown() {
   local run_id
   run_id=$(start_minimal)
 
+  # Set current step to running status (stage-context only runs for running steps)
+  local current_step
+  current_step=$(run_meta "$run_id" current_step)
+  local state_file="$TEST_DIR/.claudekiq/runs/$run_id/state.json"
+  local state
+  state=$(jq --arg id "$current_step" '.[$id].status = "running"' "$state_file")
+  echo "$state" > "$state_file"
+
   # Create a modified file so git diff has something
   echo "hello" > "$TEST_DIR/test_file.txt"
   git add "$TEST_DIR/test_file.txt"
@@ -45,6 +53,14 @@ teardown() {
   local run_id
   run_id=$(start_minimal)
 
+  # Set current step to running status (stage-context only runs for running steps)
+  local current_step
+  current_step=$(run_meta "$run_id" current_step)
+  local state_file="$TEST_DIR/.claudekiq/runs/$run_id/state.json"
+  local state
+  state=$(jq --arg id "$current_step" '.[$id].status = "running"' "$state_file")
+  echo "$state" > "$state_file"
+
   echo "content" > "$TEST_DIR/src_file.ts"
   git add "$TEST_DIR/src_file.ts"
 
@@ -53,10 +69,8 @@ teardown() {
   echo "$hook_input" | "$CQ" _stage-context 2>/dev/null || true
 
   # Check step state has files
-  local current_step
-  current_step=$(run_meta "$run_id" current_step)
   local files
-  files=$(jq --arg id "$current_step" '.[$id].files // []' "$TEST_DIR/.claudekiq/runs/$run_id/state.json")
+  files=$(jq --arg id "$current_step" '.[$id].files // []' "$state_file")
   local files_count
   files_count=$(jq 'length' <<< "$files")
   [[ "$files_count" -gt 0 ]]

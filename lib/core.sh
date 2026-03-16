@@ -489,7 +489,15 @@ cq_safety_policy() {
 
 # --- Context builders ---
 
+# Default max_lines per builder type (can be overridden per-builder via max_lines field)
+_CQ_CB_DEFAULTS_git_diff=200
+_CQ_CB_DEFAULTS_error_context=100
+_CQ_CB_DEFAULTS_file_contents=100
+_CQ_CB_DEFAULTS_test_output=50
+_CQ_CB_DEFAULTS_command_output=50
+
 # Resolve context_builders for a step and return assembled markdown context.
+# Each builder supports optional max_lines field to override defaults.
 # Usage: cq_resolve_context_builders <run_id> <step_id>
 cq_resolve_context_builders() {
   local run_id="$1" step_id="$2"
@@ -498,6 +506,10 @@ cq_resolve_context_builders() {
   builders_json=$(jq -r '.context_builders // []' <<< "$step")
   [[ "$builders_json" == "[]" ]] && return 0
 
+  # Read global max_lines override from config if set
+  local global_max_lines=""
+  global_max_lines=$(cq_config_get "context_builder_max_lines" 2>/dev/null || true)
+
   local count i builder_type
   count=$(jq 'length' <<< "$builders_json")
   for ((i=0; i<count; i++)); do
@@ -505,16 +517,31 @@ cq_resolve_context_builders() {
     builder=$(jq --argjson i "$i" '.[$i]' <<< "$builders_json")
     builder_type=$(jq -r '.type' <<< "$builder")
 
+    # Resolve max_lines: per-builder > global config > type default
+    local max_lines
+    max_lines=$(jq -r '.max_lines // empty' <<< "$builder")
+    if [[ -z "$max_lines" ]]; then
+      if [[ -n "$global_max_lines" ]]; then
+        max_lines="$global_max_lines"
+      else
+        local default_var="_CQ_CB_DEFAULTS_${builder_type}"
+        max_lines="${!default_var:-100}"
+      fi
+    fi
+
     case "$builder_type" in
       git_diff)
         local diff
-        diff=$(git diff HEAD 2>/dev/null | head -200 || true)
+        diff=$(git diff HEAD 2>/dev/null | head -"$max_lines" || true)
         [[ -n "$diff" ]] && result="${result}"$'\n\n'"## Git Diff"$'\n'"\`\`\`"$'\n'"${diff}"$'\n'"\`\`\`"
         ;;
       error_context)
         local prev_error
         prev_error=$(jq -r --arg id "$step_id" '.[$id].error_output // empty' "$(cq_run_dir "$run_id")/state.json" 2>/dev/null)
-        [[ -n "$prev_error" ]] && result="${result}"$'\n\n'"## Previous Error"$'\n'"\`\`\`"$'\n'"${prev_error}"$'\n'"\`\`\`"
+        if [[ -n "$prev_error" ]]; then
+          prev_error=$(echo "$prev_error" | head -"$max_lines")
+          result="${result}"$'\n\n'"## Previous Error"$'\n'"\`\`\`"$'\n'"${prev_error}"$'\n'"\`\`\`"
+        fi
         ;;
       file_contents)
         local paths
@@ -523,7 +550,7 @@ cq_resolve_context_builders() {
           [[ -z "$path" ]] && continue
           if [[ -f "$path" ]]; then
             local content
-            content=$(head -100 "$path")
+            content=$(head -"$max_lines" "$path")
             result="${result}"$'\n\n'"## File: ${path}"$'\n'"\`\`\`"$'\n'"${content}"$'\n'"\`\`\`"
           fi
         done <<< "$paths"
@@ -533,7 +560,7 @@ cq_resolve_context_builders() {
         cmd=$(jq -r '.command // empty' <<< "$builder")
         if [[ -n "$cmd" ]]; then
           local output
-          output=$(eval "$cmd" 2>&1 | tail -50 || true)
+          output=$(eval "$cmd" 2>&1 | tail -"$max_lines" || true)
           [[ -n "$output" ]] && result="${result}"$'\n\n'"## Output: ${cmd}"$'\n'"\`\`\`"$'\n'"${output}"$'\n'"\`\`\`"
         fi
         ;;
@@ -634,6 +661,7 @@ cq_build_step_prompt() {
 
 # Resolve a step type to its handler kind.
 # Returns: "builtin", "agent", or "unknown"
+# Unknown types are errors — convention-based types are no longer supported.
 # Usage: kind=$(cq_resolve_step_type "deploy")
 cq_resolve_step_type() {
   local step_type="$1"
@@ -658,7 +686,30 @@ cq_resolve_step_type() {
     if [[ -n "$found" ]]; then echo "$found"; return; fi
   fi
 
-  echo "convention"
+  echo "unknown"
+}
+
+# --- Active runs index ---
+
+# Rebuild the .active_runs index file for fast hook lookups.
+# Called after any status transition (start, pause, resume, cancel, complete, fail).
+# The index contains one run_id per line for runs in active states (running, gated).
+cq_update_active_runs_index() {
+  local index_file="${CQ_PROJECT_ROOT}/.claudekiq/.active_runs"
+  local runs_dir="${CQ_PROJECT_ROOT}/.claudekiq/runs"
+  [[ -d "$runs_dir" ]] || { > "$index_file"; return; }
+
+  local -a active_ids=()
+  local d meta status
+  for d in "$runs_dir"/*/; do
+    [[ -f "${d}meta.json" ]] || continue
+    status=$(jq -r '.status' "${d}meta.json" 2>/dev/null) || continue
+    case "$status" in
+      running|gated) active_ids+=("$(basename "$d")") ;;
+    esac
+  done
+
+  printf '%s\n' "${active_ids[@]+"${active_ids[@]}"}" > "$index_file"
 }
 
 # --- Agent target mapping ---

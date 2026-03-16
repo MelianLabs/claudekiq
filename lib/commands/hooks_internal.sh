@@ -30,15 +30,24 @@ _cq_active_run_for_hook() {
 
 # Stage context: capture git diff summary and modified files into active run context
 # Called by PostToolUse hooks for Bash, Edit, Write
+# Only runs when a workflow step is actively executing (running status + running step)
 # Reads hook input JSON from stdin
 cmd__stage_context() {
   local run_id
   run_id=$(_cq_active_run_for_hook 2>/dev/null) || exit 0
 
-  local meta current_step
+  local meta current_step status
   meta=$(cq_read_meta "$run_id" 2>/dev/null) || exit 0
+  status=$(jq -r '.status // empty' <<< "$meta")
+  # Only stage context when a step is actively being executed
+  [[ "$status" != "running" ]] && exit 0
   current_step=$(jq -r '.current_step // empty' <<< "$meta")
   [[ -z "$current_step" ]] && exit 0
+
+  # Check step is actually running (not pending/passed/failed)
+  local step_status
+  step_status=$(cq_step_state_get "$run_id" "$current_step" 2>/dev/null | jq -r '.status // "pending"' 2>/dev/null) || exit 0
+  [[ "$step_status" != "running" ]] && exit 0
 
   # Read hook input (may contain file paths from Edit/Write)
   local input=""
@@ -110,31 +119,38 @@ _cq_stage_files_locked() {
 
 # Safety check: read per-operation policy and exit accordingly
 # Called by hook commands: cq _safety-check <operation>
-# Reads optional context from stdin
+# Only handles operations Claude Code doesn't already protect:
+#   - rm_claudekiq: protect .claudekiq/ from deletion
+#   - git_checkout: block during active workflows
+#   - edit_run_files: protect .claudekiq/runs/ from direct edits
+# Other git safety (force-push, reset --hard, rebase, commit) is handled by Claude Code natively.
 cmd__safety_check() {
   local operation="${1:?Usage: cq _safety-check <operation>}"
 
-  # For git_checkout, also check for active runs
+  # For git_checkout, check for active runs using index or scan
   if [[ "$operation" == "git_checkout" ]]; then
     local has_active=false
-    if ls "${CQ_PROJECT_ROOT}/.claudekiq/runs"/*/meta.json 2>/dev/null | head -1 | grep -q .; then
-      local f status
-      for f in "${CQ_PROJECT_ROOT}/.claudekiq/runs"/*/meta.json; do
-        status=$(jq -r '.status' "$f" 2>/dev/null)
-        if [[ "$status" == "running" || "$status" == "gated" ]]; then
-          has_active=true
-          break
-        fi
-      done
+    # Try active runs index first (fast path)
+    local index_file="${CQ_PROJECT_ROOT}/.claudekiq/.active_runs"
+    if [[ -f "$index_file" ]]; then
+      local count
+      count=$(wc -l < "$index_file" | tr -d ' ')
+      [[ "$count" -gt 0 ]] && has_active=true
+    else
+      # Fallback: scan run directories
+      if ls "${CQ_PROJECT_ROOT}/.claudekiq/runs"/*/meta.json 2>/dev/null | head -1 | grep -q .; then
+        local f status
+        for f in "${CQ_PROJECT_ROOT}/.claudekiq/runs"/*/meta.json; do
+          status=$(jq -r '.status' "$f" 2>/dev/null)
+          if [[ "$status" == "running" || "$status" == "gated" ]]; then
+            has_active=true
+            break
+          fi
+        done
+      fi
     fi
     # No active runs → always allow
     [[ "$has_active" == "false" ]] && exit 0
-  fi
-
-  # For git_commit, delegate to pre-commit validate
-  if [[ "$operation" == "git_commit" ]]; then
-    cmd__pre_commit_validate "$@"
-    return $?
   fi
 
   local policy
@@ -147,9 +163,6 @@ cmd__safety_check() {
         rm_claudekiq) messages="Warning: deleting .claudekiq directory — use cq cleanup instead" ;;
         git_checkout) messages="Warning: git checkout/switch while cq workflows are running/gated." ;;
         edit_run_files) messages="Warning: editing run files directly — use cq commands instead" ;;
-        git_force_push) messages="Warning: git force-push can overwrite remote history" ;;
-        git_reset_hard) messages="Warning: git reset --hard discards uncommitted changes" ;;
-        git_rebase) messages="Warning: git rebase during active workflow can cause conflicts" ;;
         *) messages="Warning: operation '${operation}' flagged by safety policy" ;;
       esac
       echo "$messages" >&2
@@ -161,9 +174,6 @@ cmd__safety_check() {
         rm_claudekiq) messages="Blocked: cannot delete .claudekiq directory — use cq cleanup instead" ;;
         git_checkout) messages="Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first." ;;
         edit_run_files) messages="Blocked: do not edit run files directly — use cq commands instead" ;;
-        git_force_push) messages="Blocked: git force-push can overwrite remote history. Use regular push instead." ;;
-        git_reset_hard) messages="Blocked: git reset --hard discards uncommitted changes. Stash or commit first." ;;
-        git_rebase) messages="Blocked: git rebase during active workflow can cause conflicts. Pause or cancel active runs first." ;;
         *) messages="Blocked: operation '${operation}' blocked by safety policy" ;;
       esac
       echo "$messages" >&2
