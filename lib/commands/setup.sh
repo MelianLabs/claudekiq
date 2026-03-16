@@ -35,17 +35,20 @@ cmd_init() {
     local needs_runs=true
     local needs_active_runs=true
     local needs_commands=true
+    local needs_cqmd=true
     if [[ -f "$gitignore" ]]; then
       grep -qF '.claudekiq/workflows/private/' "$gitignore" && needs_private=false
       grep -qF '.claudekiq/runs/' "$gitignore" && needs_runs=false
       grep -qF '.claudekiq/.active_runs' "$gitignore" && needs_active_runs=false
       grep -qF '.claude/commands/cq*.md' "$gitignore" && needs_commands=false
+      grep -qF '.claude/cq.md' "$gitignore" && needs_cqmd=false
     fi
     {
       $needs_private && echo '.claudekiq/workflows/private/'
       $needs_runs && echo '.claudekiq/runs/'
       $needs_active_runs && echo '.claudekiq/.active_runs'
       $needs_commands && echo '.claude/commands/cq*.md'
+      $needs_cqmd && echo '.claude/cq.md'
     } >> "$gitignore"
   fi
 
