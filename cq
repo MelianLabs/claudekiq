@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cq — Claudekiq: filesystem-backed workflow engine CLI for Claude Code
-# https://github.com/MelianLabs/claudekiq
+# https://github.com/robertgrig/claudekiq
 
 set -euo pipefail
 

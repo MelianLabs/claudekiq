@@ -25,7 +25,7 @@ It also works as an MCP plugin, exposing all commands as native Claude Code tool
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MelianLabs/claudekiq/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/robertgrig/claudekiq/main/install.sh | bash
 ```
 
 This installs `cq` to `~/.cq/bin/`. Add it to your PATH:
@@ -44,7 +44,7 @@ fish_add_path ~/.cq/bin
 ### From Source
 
 ```bash
-git clone https://github.com/MelianLabs/claudekiq.git
+git clone https://github.com/robertgrig/claudekiq.git
 cd claudekiq
 bash install.sh
 ```

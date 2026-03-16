@@ -15,7 +15,7 @@ Architecture: Entry point (`cq`) sources libraries in order — `lib/core.sh`, `
 Single curl command installs the `cq` script to `~/.cq/bin/cq` and creates the global config directory:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MelianLabs/claudekiq/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/robertgrig/claudekiq/main/install.sh | bash
 ```
 
 The install script:

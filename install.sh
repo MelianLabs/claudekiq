@@ -3,7 +3,7 @@
 set -euo pipefail
 
 CQ_HOME="${HOME}/.cq"
-REPO_URL="${CQ_REPO_URL:-https://raw.githubusercontent.com/MelianLabs/claudekiq/main}"
+REPO_URL="${CQ_REPO_URL:-https://raw.githubusercontent.com/robertgrig/claudekiq/main}"
 
 echo "Installing cq..."
 
