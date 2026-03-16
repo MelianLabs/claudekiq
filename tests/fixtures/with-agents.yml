@@ -1,0 +1,42 @@
+name: with-agents
+description: Workflow with agent steps using prompt, context, and model fields
+
+params:
+  description: "What to build"
+  branch_name: "Feature branch name"
+
+defaults:
+  description: "test feature"
+  branch_name: "test-branch"
+
+steps:
+  - id: plan
+    name: Plan Implementation
+    type: agent
+    prompt: "Plan implementation for: {{description}}. Identify files and approach."
+    context: [description]
+    gate: human
+    model: sonnet
+
+  - id: create-branch
+    name: Create Branch
+    type: bash
+    target: "echo creating branch {{branch_name}}"
+    gate: auto
+
+  - id: implement
+    name: Implement
+    type: agent
+    target: "@rails-dev"
+    prompt: "Implement the plan. All tests must pass."
+    context: [description]
+    gate: review
+    max_visits: 3
+    model: opus
+    resume: true
+
+  - id: commit
+    name: Commit Changes
+    type: bash
+    target: "echo committing"
+    gate: auto

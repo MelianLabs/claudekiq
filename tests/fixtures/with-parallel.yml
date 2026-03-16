@@ -1,0 +1,30 @@
+name: with-parallel
+description: Workflow with parallel step
+
+steps:
+  - id: setup
+    name: Setup
+    type: bash
+    target: "echo setup"
+    gate: auto
+
+  - id: parallel-tests
+    name: Run All Tests
+    type: parallel
+    gate: auto
+    branches:
+      - id: unit-tests
+        type: bash
+        target: "echo unit tests"
+      - id: lint
+        type: bash
+        target: "echo lint"
+      - id: integration
+        type: bash
+        target: "echo integration"
+
+  - id: done
+    name: Done
+    type: bash
+    target: "echo done"
+    gate: auto

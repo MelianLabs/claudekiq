@@ -82,3 +82,70 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" == *"must match"* ]]
 }
+
+@test "workflows validate accepts valid context_builders" {
+  local wf="$TEST_DIR/cb-valid.yml"
+  cat > "$wf" <<'EOF'
+name: cb-valid
+steps:
+  - id: fix-tests
+    type: agent
+    prompt: "Fix the failing tests."
+    context_builders:
+      - type: git_diff
+      - type: error_context
+      - type: command_output
+        command: "echo hello"
+EOF
+  run "$CQ" workflows validate "$wf"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Valid"* ]]
+}
+
+@test "workflows validate rejects unknown context_builder type" {
+  local wf="$TEST_DIR/cb-bad.yml"
+  cat > "$wf" <<'EOF'
+name: cb-bad
+steps:
+  - id: fix-tests
+    type: agent
+    prompt: "Fix the failing tests."
+    context_builders:
+      - type: nonexistent_type
+EOF
+  run "$CQ" workflows validate "$wf"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown context_builder type"* ]]
+}
+
+@test "workflows validate rejects file_contents without paths" {
+  local wf="$TEST_DIR/cb-nopath.yml"
+  cat > "$wf" <<'EOF'
+name: cb-nopath
+steps:
+  - id: fix-tests
+    type: agent
+    prompt: "Fix the failing tests."
+    context_builders:
+      - type: file_contents
+EOF
+  run "$CQ" workflows validate "$wf"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"requires 'paths' array"* ]]
+}
+
+@test "workflows validate rejects command_output without command" {
+  local wf="$TEST_DIR/cb-nocmd.yml"
+  cat > "$wf" <<'EOF'
+name: cb-nocmd
+steps:
+  - id: fix-tests
+    type: agent
+    prompt: "Fix the failing tests."
+    context_builders:
+      - type: command_output
+EOF
+  run "$CQ" workflows validate "$wf"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"requires 'command' string"* ]]
+}

@@ -1,0 +1,10 @@
+name: circular-extends
+extends: circular-extends-b
+description: Workflow with circular extends
+
+steps:
+  - id: step-a
+    name: Step A
+    type: bash
+    target: "echo a"
+    gate: auto

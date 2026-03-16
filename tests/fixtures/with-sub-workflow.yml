@@ -1,0 +1,28 @@
+name: with-sub-workflow
+description: Workflow that invokes a sub-workflow
+
+defaults:
+  environment: staging
+
+steps:
+  - id: prepare
+    name: Prepare
+    type: bash
+    target: "echo prepare"
+    gate: auto
+
+  - id: deploy-staging
+    name: Deploy to Staging
+    type: workflow
+    template: sub-deploy
+    context_map:
+      environment: "{{environment}}"
+    outputs:
+      deploy_url: "deploy_url"
+    gate: auto
+
+  - id: verify
+    name: Verify
+    type: bash
+    target: "echo verify"
+    gate: auto

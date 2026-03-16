@@ -1,0 +1,69 @@
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cq check-stale --timeout=0 --mark 2>/dev/null || true",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'input=$(cat); cmd=$(echo \"$input\" | jq -r \".tool_input.command // empty\"); case \"$cmd\" in *\"rm -rf .claudekiq\"*|*\"rm -rf .claudekiq/\"*|*\"rm -r .claudekiq\"*|*\"rm -r .claudekiq/\"*) echo \"Blocked: cannot delete .claudekiq directory — use cq cleanup instead\" >&2; exit 2;; *\"git checkout\"*|*\"git switch\"*) if ls .claudekiq/runs/*/meta.json 2>/dev/null | head -1 | grep -q .; then for f in .claudekiq/runs/*/meta.json; do status=$(jq -r .status \"$f\" 2>/dev/null); if [ \"$status\" = \"running\" ] || [ \"$status\" = \"gated\" ]; then echo \"Blocked: git checkout/switch while cq workflows are running/gated. Pause or cancel active runs first.\" >&2; exit 2; fi; done; fi;; *\"Edit\"*|*\"Write\"*) :;; esac; exit 0'"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); case \"$path\" in */.claudekiq/runs/*) echo \"Blocked: do not edit run files directly — use cq commands instead\" >&2; exit 2;; esac; exit 0'"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'input=$(cat); path=$(echo \"$input\" | jq -r \".tool_input.file_path // empty\"); case \"$path\" in */.claudekiq/runs/*) echo \"Blocked: do not write to run files directly — use cq commands instead\" >&2; exit 2;; esac; exit 0'"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'input=$(cat); desc=$(echo \"$input\" | jq -r \".description // empty\"); case \"$desc\" in Worker:*) if command -v osascript &>/dev/null; then osascript -e \"display notification \\\"$desc completed\\\" with title \\\"cq: Worker Done\\\" sound name \\\"Ping\\\"\" &>/dev/null; elif command -v notify-send &>/dev/null; then notify-send \"cq: Worker Done\" \"$desc completed\" &>/dev/null; fi;; esac; exit 0'",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'input=$(cat); worktree_path=$(echo \"$input\" | jq -r \".worktree_path // empty\"); if [ -n \"$worktree_path\" ]; then cd \"$worktree_path\" && cq init 2>/dev/null; fi; exit 0'",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

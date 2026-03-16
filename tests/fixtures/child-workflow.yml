@@ -1,0 +1,21 @@
+name: child-workflow
+extends: base-workflow
+description: Child workflow extending base
+
+defaults:
+  mode: feature
+
+steps:
+  - id: plan
+    name: Plan Feature
+    type: bash
+    target: "echo plan"
+    gate: auto
+
+override:
+  run-tests:
+    gate: review
+    max_visits: 5
+
+remove:
+  - commit

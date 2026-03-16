@@ -1,0 +1,10 @@
+name: circular-extends-b
+extends: circular-extends
+description: Second part of circular extends chain
+
+steps:
+  - id: step-b
+    name: Step B
+    type: bash
+    target: "echo b"
+    gate: auto

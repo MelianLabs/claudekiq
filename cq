@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # cq — Claudekiq: filesystem-backed workflow engine CLI for Claude Code
-# https://github.com/MelianLabs/claudekiq
+# https://github.com/robertgrig/claudekiq
 
 set -euo pipefail
 
-export CQ_VERSION="2.2.0"
+export CQ_VERSION="3.2.9"
 
 # --- Resolve script location and source libs ---
 
@@ -29,7 +29,22 @@ _source_lib() {
 _source_lib "core.sh"
 _source_lib "yaml.sh"
 _source_lib "storage.sh"
-_source_lib "commands.sh"
+
+# Source command modules (split from monolithic commands.sh)
+for _cq_cmd_file in "${CQ_SCRIPT_DIR}/lib/commands/"*.sh; do
+  if [[ -f "$_cq_cmd_file" ]]; then
+    # shellcheck source=/dev/null
+    source "$_cq_cmd_file"
+  fi
+done
+# Fallback: try ~/.cq/lib/commands/ if script dir doesn't have them
+if [[ ! -d "${CQ_SCRIPT_DIR}/lib/commands" || -z "$(ls "${CQ_SCRIPT_DIR}/lib/commands/"*.sh 2>/dev/null)" ]]; then
+  for _cq_cmd_file in "${HOME}/.cq/lib/commands/"*.sh; do
+    [[ -f "$_cq_cmd_file" ]] && source "$_cq_cmd_file"
+  done
+fi
+unset _cq_cmd_file
+
 _source_lib "schema.sh"
 
 # --- Check dependencies ---
@@ -86,6 +101,7 @@ case "$COMMAND" in
   # Workflow lifecycle
   start)          cmd_start "$@" ;;
   status)         cmd_status "$@" ;;
+  next)           cmd_next "$@" ;;
   list)           cmd_list "$@" ;;
   log)            cmd_log "$@" ;;
 
@@ -113,9 +129,16 @@ case "$COMMAND" in
 
   # Template management
   workflows)      cmd_workflows "$@" ;;
+  validate)       cmd_validate "$@" ;;
 
   # Configuration
   config)         cmd_config "$@" ;;
+
+  # Discovery
+  scan)           cmd_scan "$@" ;;
+
+  # Hooks management
+  hooks)          cmd_hooks "$@" ;;
 
   # Heartbeat / stale detection
   heartbeat)      cmd_heartbeat "$@" ;;
@@ -124,11 +147,15 @@ case "$COMMAND" in
   # Maintenance
   cleanup)        cmd_cleanup "$@" ;;
 
-  # Workers (parallel orchestration)
-  workers)        cmd_workers "$@" ;;
-
   # MCP server mode
   mcp)            _source_lib "mcp.sh"; cq_mcp_serve ;;
+
+  # Internal hook handlers (underscore-prefixed, not in help/schema)
+  _stage-context)       cmd__stage_context "$@" ;;
+  _pre-commit-validate) cmd__pre_commit_validate "$@" ;;
+  _capture-output)      cmd__capture_output "$@" ;;
+  _safety-check)        cmd__safety_check "$@" ;;
+  _resolve-context)     cmd__resolve_context "$@" ;;
 
   *)
     echo "cq: unknown command '${COMMAND}'. Run 'cq help' for usage." >&2

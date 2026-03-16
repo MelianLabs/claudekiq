@@ -1,237 +1,121 @@
 ---
 name: cq
-description: "Claudekiq workflow runner — orchestrates multi-step development workflows. Use /cq to list and run workflows, /cq <workflow> to start a specific one, or /cq status to monitor all jobs."
+description: "Claudekiq workflow engine — start, resume, monitor workflows, setup projects. Use /cq to list and run workflows, /cq <workflow> to start one, /cq status for dashboard, /cq init or /cq setup to initialize."
+argument-hint: "[workflow|init|setup|status|approve] [--key=val...]"
+allowed-tools: Bash, Read, Write, Glob, Grep, Skill, Agent, TaskCreate, TaskUpdate, TodoRead, TodoWrite, AskUserQuestion, CronCreate, CronDelete
 ---
 
-# Claudekiq Workflow Runner
+# Claudekiq — Single Entry Point
 
-You are the runner for `cq` (claudekiq), a filesystem-backed workflow engine. Your job is to execute workflow steps, handle gates, and drive workflows to completion.
+## Prerequisites
+If any required tool is unavailable, report the error clearly and suggest running via CLI instead.
+
+You are the **sole user-facing entry point** for `cq` (claudekiq), a filesystem-backed workflow engine. You handle ALL user interactions: starting, resuming, monitoring workflows, project setup, and approval gates. Internal skills (`/cq-runner`, `/cq-approve`, `/cq-worker`, `/cq-setup`) are invoked programmatically by you — users never call them directly.
+
+## Current State
+
+Available workflows:
+`!cq workflows list --json 2>/dev/null || echo "[]"`
+
+Active runs:
+`!cq list --json 2>/dev/null || echo "[]"`
 
 ## Invocation
 
 Parse the arguments passed to this skill:
 
-- **No arguments (`/cq`)**: Interactive mode — list workflows and let the user pick one
-- **Status dashboard (`/cq status`)**: Show all running and pending jobs with auto-refresh
+- **No arguments (`/cq`)**: Interactive mode
+- **Status dashboard (`/cq status`)**: Show all running and pending jobs
+- **Init (`/cq init`)**: Initialize cq in the current project
+- **Setup (`/cq setup`)**: Smart project discovery and workflow creation
+- **Approve (`/cq approve [run_id]`)**: Handle pending approval gates
 - **With workflow name (`/cq feature`)**: Start that workflow directly
-- **With workflow + params (`/cq feature --description="add export" --branch_name=export`)**: Start with those context variables
+- **With workflow + params (`/cq feature --description="add export"`)**: Start with context variables
 
 ## Interactive Mode (no arguments)
 
-1. Run: `cq workflows list --json`
-2. Also check: `cq status --json` for any active runs
-3. If there are **active runs** (status is running, gated, or paused):
-   - Show them first with their current step and status
-   - Ask the user: "Resume an active workflow or start a new one?"
-   - If resuming, get the run_id and jump to the **Runner Loop**
-4. If starting new: present the workflow list with descriptions
-5. Ask which workflow to run
-6. Proceed to **Start Workflow**
+1. Run: `Bash(command: "cq workflows list --json")` and `Bash(command: "cq list --json")`
+2. If there are **active runs** (running, gated, paused): show them, ask "Resume or start new?"
+3. If starting new: present workflow list, ask which to run
+4. Proceed to **Start Workflow** or **Resume Workflow**
 
-## Status Dashboard (`/cq status`)
+## Init Mode (`/cq init`)
 
-This mode shows a live dashboard of all running, pending, and gated jobs with auto-refresh.
+1. Run: `Bash(command: "cq init --json")`
+2. Report what was created/found
+3. Suggest running `/cq setup` to discover the project and create workflows
 
-### How it works
+## Setup Mode (`/cq setup`)
 
-1. Run: `cq list --json` to get all active runs
-2. Run: `cq todos --json` to get all pending TODOs across runs
-3. Display a formatted dashboard:
-
+Delegate to `/cq-setup` skill internally:
 ```
-📋 Claudekiq Jobs Dashboard
-═══════════════════════════
-
-🔄 Running (2)
-  ├─ [abc12345] feature "add export command" — Step 3/6: run-tests 🔄
-  └─ [def67890] bugfix "fix login" — Step 1/4: create-branch 🔄
-
-⏸️ Gated (1)
-  └─ [ghi11111] release "v2.0.0" — Step 5/7: push-to-origin ⏸️ (awaiting approval)
-
-📋 Queued (1)
-  └─ [jkl22222] feature "add import" — pending (waiting for concurrency slot)
-
-✅ Recently Completed (last 24h)
-  └─ [mno33333] release "v1.0.0" — completed 2h ago
-
-📝 Pending TODOs (1)
-  └─ #1 [ghi11111] release/push-to-origin — approve push to origin/main
+Skill(name: "cq-setup")
 ```
 
-4. For each run, show:
-   - Run ID (short)
-   - Workflow name
-   - Description from context (if available)
-   - Current step and position (e.g., "Step 3/6")
-   - Status marker
-   - For gated runs: what TODO is pending
-5. After displaying, ask the user:
-   - **"Auto-refresh every 10s? (y/n)"** — if yes, use the `/loop` skill: `/loop 10s /cq status`
-   - **"Resume a run?"** — if yes, get the run_id and jump to the **Runner Loop**
-   - **"Resolve a TODO?"** — if yes, show TODO details and handle approve/reject
+The setup skill handles:
+1. Auto-initialize if needed (`cq init`)
+2. Scan project for agents, skills, stacks, commands
+3. Present discovery report
+4. Check for existing workflows committed by teammates — present them
+5. If no workflows exist: guide creation of first workflow
+6. After first workflow: ask if user wants to define more
+7. Validate all created workflows
 
-### Auto-refresh
+## Resume Workflow
 
-When the user wants auto-refresh, invoke the `/loop` skill with a 10-second interval:
-- Skill: `loop`, Args: `10s /cq status`
-- This will re-run `/cq status` every 10 seconds until the user stops it
-- The user can stop it at any time by pressing the interrupt key
+1. Create/update Task (fire-and-forget):
+   ```
+   TaskCreate(name: "cq: <template> — resumed", description: "Resumed workflow (run: <run_id>)")
+   ```
+2. Hand off: `Skill(name: "cq-runner", args: "<run_id>")`
+3. After runner returns: proceed to **Handle Completion**
 
 ## Start Workflow
 
-1. Run: `cq workflows show <name> --json`
-2. Extract the `defaults` object from the workflow definition
-3. Merge any `--key=val` arguments already provided
-4. For each default that has an **empty string value** and was NOT provided via arguments, ask the user for a value. Skip defaults that already have non-empty values (those are true defaults, not required params).
-5. Run: `cq start <name> --key=val...` with all collected parameters. Use `--json` to capture the run_id.
-6. Extract `run_id` from the JSON response
-7. Enter the **Runner Loop**
+1. Run: `Bash(command: "cq workflows show <name> --json")`
+2. Check for `params` — for each required parameter not provided via arguments:
+   ```
+   AskUserQuestion(question: "Workflow '<name>' requires '<param>': <description>. What value?",
+     options: [{label: "<default>", description: "Use default"}, {label: "Custom", description: "Enter value"}])
+   ```
+3. Run: `Bash(command: "cq start <name> --key=val... --json")` — capture the `run_id`
+4. Create Task (fire-and-forget — do NOT store task_id):
+   ```
+   TaskCreate(name: "cq: <template> — <description>", description: "Running workflow <template> (run: <run_id>)")
+   ```
+5. Hand off: `Skill(name: "cq-runner", args: "<run_id>")`
+6. After runner returns: proceed to **Handle Completion**
 
-## Runner Loop
+## Approve Mode (`/cq approve [run_id]`)
 
-This is the core execution loop. Repeat until the workflow completes, fails, or is cancelled:
-
-### Step 1: Read State
-```bash
-cq status <run_id> --json
+Delegate to `/cq-approve` skill internally:
 ```
-Extract:
-- `meta.status` — the run status
-- `meta.current_step` — the step to execute
-- `steps` — array of step definitions
-- `state` — per-step state (visits, status)
-- `ctx` — context variables
-
-### Step 2: Check Terminal States
-If `meta.status` is:
-- `completed` → Report success with a summary of what was done. Stop.
-- `failed` → Report failure, show which step failed and why. Stop.
-- `cancelled` → Report cancellation. Stop.
-- `blocked` → The previous runner crashed. Report the blocked step and ask the user: retry (`cq retry <run_id>`) or cancel.
-
-### Step 3: Check for Pending TODOs
-If `meta.status` is `gated`:
-```bash
-cq todos --json
-```
-For each pending TODO:
-- Show the step name, action type, and description to the user
-- Ask: approve, reject, override, or dismiss
-- Run: `cq todo <number> <action>`
-- After resolving, go back to **Step 1**
-
-### Step 4: Find Current Step
-Find the step definition in `steps` where `id == meta.current_step`. Extract:
-- `type` — how to execute (bash, agent, skill, manual, subflow)
-- `target` — what to execute
-- `args_template` — arguments template
-- `gate` — what happens after (auto, human, review)
-- `description` — for manual steps
-- `outputs` — what to extract from results
-
-### Step 5: Interpolate Variables
-Replace all `{{variable}}` references in `target` and `args_template` with values from `ctx`. Use the context JSON to resolve them.
-
-### Step 5.5: Write Heartbeat
-Before executing the step, write a heartbeat to signal the runner is alive:
-```bash
-cq heartbeat <run_id>
-```
-This lets `cq check-stale` detect if the runner crashes mid-step.
-
-For **long-running steps** (`agent`, `skill`, or `bash` commands that spawn background agents), start a background heartbeat loop **before** executing the step, and kill it **after**:
-```bash
-# Start background heartbeat (every 30s)
-( while true; do cq heartbeat <run_id> 2>/dev/null; sleep 30; done ) &
-CQ_HB_PID=$!
-
-# ... execute the step ...
-
-# Stop background heartbeat
-kill $CQ_HB_PID 2>/dev/null; wait $CQ_HB_PID 2>/dev/null
-```
-This prevents `check-stale` from falsely flagging runs as stale during multi-minute agent/skill executions.
-
-### Step 6: Execute Step
-
-Based on the step `type`:
-
-#### `bash`
-Run the interpolated `target` as a shell command using the Bash tool.
-- Exit code 0 → outcome is `pass`
-- Non-zero exit → outcome is `fail`
-- Capture stdout as the result
-
-#### `agent`
-The `args_template` (interpolated) is your task prompt. Execute it as an AI task:
-- Do the work described in the interpolated args_template
-- When done, the outcome is `pass`
-- If you cannot complete the task, the outcome is `fail`
-- The `target` field (e.g. `@rails-dev`) is informational context about the intended agent role
-
-#### `skill`
-The `target` contains a skill name (e.g. `/review`). Invoke it:
-- Use the Skill tool with the target skill name and the interpolated args_template as arguments
-- Pass if successful, fail if not
-
-#### `manual`
-This is a human action step:
-- Display the step `description` (interpolated) to the user
-- Tell the user what they need to do
-- The outcome depends on what happens after — the gate system will create a TODO
-
-#### `subflow`
-Insert steps from another workflow:
-```bash
-cq add-steps <run_id> --flow <target> --after <current_step_id>
-```
-Then mark the current step as pass and continue.
-
-### Step 7: Mark Step Complete
-```bash
-cq step-done <run_id> <step_id> pass|fail [result_json]
-```
-If the step produced JSON output (e.g. from a bash command), pass it as `result_json` so outputs can be extracted into context.
-
-After marking the step complete, refresh the heartbeat:
-```bash
-cq heartbeat <run_id>
+Skill(name: "cq-approve", args: "<run_id>")
 ```
 
-### Step 8: Handle Post-Step State
-Re-read status: `cq status <run_id> --json`
+## Handle Completion
 
-The `cq step-done` command already handles gate logic internally:
-- **auto gate**: Step advances automatically. Continue the loop.
-- **human gate**: Run is now `gated` with a pending TODO. Go to **Step 3**.
-- **review gate (pass)**: Advances automatically. Continue the loop.
-- **review gate (fail)**: If under max_visits, routes via `on_fail` automatically. If at max_visits, creates a TODO and sets `gated`. Go to **Step 3**.
+After `/cq-runner` returns, read final state:
+```
+Bash(command: "cq status <run_id> --json")
+```
 
-Go back to **Step 1**.
+Based on `meta.status`:
+- `completed` → `TaskUpdate` best-effort (fire-and-forget)
+- `failed` → `TaskUpdate` best-effort
+- `cancelled` → `TaskUpdate` best-effort
+- `paused` → `TaskUpdate` best-effort
 
-## Display Guidelines
+**Completion TODO Sync**: `TodoRead()` — for any lingering `[cq]` TODOs: `TodoWrite(todos: [{id: "<id>", status: "completed"}])`
 
-- Show progress as you go: "Step 3/8: Running Tests 🔄"
-- Use the status markers: ✅ passed, ❌ failed, 🔄 running, ⏸️ gated, ⏭️ skipped, ⬚ pending
-- When a step completes, show a one-line summary
-- When hitting a human gate, clearly explain what decision is needed
-- When a workflow completes, show a summary of all steps and their outcomes
-
-## Error Handling
-
-- If `cq` commands fail (non-zero exit), report the error and ask the user how to proceed
-- If a bash step fails and the gate is `auto`, the workflow advances (routing handles it)
-- If you can't execute an agent step, mark it as `fail` and let the gate logic handle retry/escalation
-- Never silently swallow errors — always report what happened
+Report final status to the user with a summary of what happened.
 
 ## Important Rules
 
-- Always use `--json` flag when reading cq state (parsing is more reliable)
-- Never modify run files directly — always use `cq` commands
-- The `cq` CLI handles all routing, gate logic, and state transitions — trust it
-- For agent steps, YOU are the agent — do the work described in args_template
-- For bash steps, run exactly the interpolated command — don't modify it
-- If the user wants to pause, run: `cq pause <run_id>`
-- If the user wants to cancel, run: `cq cancel <run_id>`
-- If the user wants to skip a step, run: `cq skip <run_id>`
+- Always use `--json` when reading cq state
+- Never modify run files directly — use `cq` commands
+- Delegate execution to `/cq-runner` — do not run the loop yourself
+- Delegate gate handling to `/cq-approve` (via `/cq-runner`)
+- For agent steps: `/cq-runner` will dispatch to `/cq-worker`
+- Task mirroring is fire-and-forget — do NOT store `_task_id` in context
+- Only `/cq` is visible to users — internal skills are implementation details

@@ -1,0 +1,12 @@
+name: missing-vars
+description: Workflow referencing undeclared context variables
+
+defaults:
+  greeting: hello
+
+steps:
+  - id: step-a
+    name: Step A
+    type: bash
+    target: "echo {{greeting}} {{undeclared_var}}"
+    gate: auto

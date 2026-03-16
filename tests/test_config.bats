@@ -50,6 +50,20 @@ teardown() {
   [ "$val" = "5" ]
 }
 
+@test "config set supports dot-notation for nested keys" {
+  "$CQ" config set safety.git_commit warn >/dev/null
+  local val
+  val=$(jq -r '.safety.git_commit' .claudekiq/settings.json)
+  [ "$val" = "warn" ]
+}
+
+@test "config set dot-notation creates nested structure" {
+  "$CQ" config set safety.rm_claudekiq block >/dev/null
+  "$CQ" config set safety.git_checkout warn >/dev/null
+  jq -e '.safety.rm_claudekiq == "block"' .claudekiq/settings.json
+  jq -e '.safety.git_checkout == "warn"' .claudekiq/settings.json
+}
+
 @test "config --json" {
   run "$CQ" --json config get concurrency
   [ "$status" -eq 0 ]
