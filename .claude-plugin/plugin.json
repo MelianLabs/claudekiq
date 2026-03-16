@@ -1,6 +1,6 @@
 {
   "name": "claudekiq",
-  "version": "3.2.8",
+  "version": "3.2.9",
   "description": "Filesystem-backed workflow engine for Claude Code",
   "author": "MelianLabs",
   "homepage": "https://github.com/robertgrig/claudekiq",
