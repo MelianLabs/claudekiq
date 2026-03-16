@@ -27,7 +27,7 @@ cmd_init() {
     mkdir -p "${project_dir}/.claudekiq/runs"
 
     # Create default settings.json
-    echo '{}' > "${project_dir}/.claudekiq/settings.json"
+    echo '{"default_model":"opus"}' > "${project_dir}/.claudekiq/settings.json"
 
     # Append to .gitignore
     local gitignore="${project_dir}/.gitignore"
@@ -69,8 +69,8 @@ cmd_init() {
 
   # Output with discovery context
   local _agents_found _workflows_found _stacks_found
-  _agents_found=$(jq '.agents // [] | length' "${project_dir}/.claudekiq/settings.json" 2>/dev/null || echo "0")
-  _workflows_found=$(find "${project_dir}/.claudekiq/workflows" -maxdepth 1 -name '*.yml' -o -name '*.yaml' 2>/dev/null | wc -l | tr -d ' ')
+  _agents_found=$( (find "${project_dir}/.claude/agents" -maxdepth 1 -name '*.md' 2>/dev/null || true) | wc -l | tr -d ' ')
+  _workflows_found=$( (find "${project_dir}/.claudekiq/workflows" -maxdepth 1 \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null || true) | wc -l | tr -d ' ')
   _stacks_found=$(jq '.stacks // [] | length' "${project_dir}/.claudekiq/settings.json" 2>/dev/null || echo "0")
 
   cq_json_out --arg dir "$project_dir" --arg status "$init_status" --argjson agents "$_agents_found" --argjson workflows "$_workflows_found" --argjson stacks "$_stacks_found" \
@@ -90,7 +90,7 @@ _init_discovery_hints() {
 
   if [[ "$agents_found" -gt 0 ]]; then
     local agent_names
-    agent_names=$(jq -r '.agents // [] | map("@" + .name) | join(", ")' "${CQ_PROJECT_ROOT:-$PWD}/.claudekiq/settings.json" 2>/dev/null || true)
+    agent_names=$(cd "${CQ_PROJECT_ROOT:-$PWD}/.claude/agents" 2>/dev/null && ls -1 *.md 2>/dev/null | sed 's/\.md$//; s/^/@/' | paste -sd', ' - || true)
     cq_info "Found ${agents_found} agent(s): ${agent_names}"
   else
     cq_hint "No agents found. Consider creating .claude/agents/<name>.md files."
@@ -117,7 +117,7 @@ _install_commands() {
 
   # Compute relative path from commands_dir to cq_home/skills/
   local rel_path
-  rel_path=$(python3 -c "import os; print(os.path.relpath('${cq_home}/skills', '${commands_dir}'))")
+  rel_path=$(_relpath "${cq_home}/skills" "$commands_dir")
 
   # Symlink skill definitions as Claude Code custom commands (relative paths)
   local skill_name
@@ -130,6 +130,42 @@ _install_commands() {
   done
 }
 
+# Compute relative path from $2 (start dir) to $1 (target).
+# Pure bash — no python3 or GNU realpath needed.
+_relpath() {
+  local target="$1" start="$2"
+
+  # Normalize to absolute paths
+  [[ "$target" != /* ]] && target="$PWD/$target"
+  [[ "$start" != /* ]] && start="$PWD/$start"
+
+  # Remove trailing slashes
+  target="${target%/}"
+  start="${start%/}"
+
+  # Find common prefix by directory components
+  local common="$start"
+  while [[ "$common" != "/" && "${target#"$common"}" == "$target" ]]; do
+    common=$(dirname "$common")
+  done
+
+  # Build ../ for each level from start above common
+  local rel=""
+  local cur="$start"
+  while [[ "$cur" != "$common" ]]; do
+    rel="${rel}../"
+    cur=$(dirname "$cur")
+  done
+
+  # Append target suffix after common prefix
+  if [[ "$common" == "/" ]]; then
+    echo "${rel}${target#/}"
+  else
+    local suffix="${target#"$common"/}"
+    echo "${rel}${suffix}"
+  fi
+}
+
 _install_plugin_json() {
   local project_dir="$1"
   local cq_home="${HOME}/.cq"
@@ -139,15 +175,15 @@ _install_plugin_json() {
   # Preserve user-added skills from existing plugin.json
   local user_skills="[]"
   if [[ -f "${plugin_dir}/plugin.json" ]]; then
-    user_skills=$(jq -r --arg home "$cq_home" '
-      [.skills // [] | .[] | select(startswith($home + "/skills/") | not)]
+    user_skills=$(jq -r '
+      [.skills // [] | .[] | select(test("\\.cq/skills/") | not)]
     ' "${plugin_dir}/plugin.json" 2>/dev/null || echo "[]")
   fi
 
   # Build new plugin.json with CQ_VERSION and merge user skills
   # Relative path from .claude-plugin/ to skills
   local rel_skills
-  rel_skills=$(python3 -c "import os; print(os.path.relpath('${cq_home}/skills/cq', '${plugin_dir}'))")
+  rel_skills=$(_relpath "${cq_home}/skills/cq" "$plugin_dir")
 
   jq -cn --arg skills "$rel_skills" --arg ver "$CQ_VERSION" --argjson user_skills "$user_skills" '{
     name:"claudekiq", version:$ver,
@@ -556,9 +592,9 @@ _generate_cq_md() {
         echo ''
       fi
 
-      # Available agents (compact)
+      # Available agents (from directory, not cached)
       local agents
-      agents=$(jq -r '.agents // [] | .[] | "- @" + .name' "$settings_file" 2>/dev/null || true)
+      agents=$(cd "${project_dir}/.claude/agents" 2>/dev/null && ls -1 *.md 2>/dev/null | sed 's/\.md$//' | sed 's/^/- @/' || true)
       if [[ -n "$agents" ]]; then
         echo '## Agents'
         echo "$agents"

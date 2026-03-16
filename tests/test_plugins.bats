@@ -61,16 +61,13 @@ teardown() { teardown_test_project; }
   [ "$result" = "unknown" ]
 }
 
-@test "resolve_step_type checks scan results for agent" {
+@test "resolve_step_type returns unknown for agent without file" {
   source "$CQ_ROOT/lib/core.sh"
   export CQ_PROJECT_ROOT="$TEST_DIR"
 
-  # Write scan results with an agent that doesn't have a .md file on disk
-  jq '. + {"agents":[{"name":"remote-deploy"}]}' .claudekiq/settings.json > .claudekiq/settings.json.tmp
-  mv .claudekiq/settings.json.tmp .claudekiq/settings.json
-
+  # Agent not on disk should resolve to unknown (agents are never cached)
   result=$(cq_resolve_step_type "remote-deploy")
-  [ "$result" = "agent" ]
+  [ "$result" = "unknown" ]
 }
 
 # --- Workflow validation with custom types ---

@@ -1,1 +1,49 @@
-{}
+{
+  "skills": [
+    {
+      "name": "cq",
+      "description": "Claudekiq workflow engine — start, resume, monitor workflows, setup projects. Use /cq to list and run workflows, /cq <workflow> to start one, /cq status for dashboard, /cq init or /cq setup to initialize.",
+      "tools": [
+        "Bash",
+        "Read",
+        "Write",
+        "Glob",
+        "Grep",
+        "Skill",
+        "Agent",
+        "TaskCreate",
+        "TaskUpdate",
+        "TodoRead",
+        "TodoWrite",
+        "AskUserQuestion",
+        "CronCreate",
+        "CronDelete"
+      ],
+      "source": "plugin"
+    }
+  ],
+  "stacks": [],
+  "commands": [
+    {
+      "name": "cq-approve",
+      "description": "Handle workflow approval gates — presents human gates and review escalations to the user for approval. Called by /cq-runner."
+    },
+    {
+      "name": "cq-runner",
+      "description": "Execute workflow steps in a loop — dispatches bash, agent, skill, batch, and sub-workflow steps. Called by /cq with a run_id."
+    },
+    {
+      "name": "cq-setup",
+      "description": "Smart project setup — discovers agents, skills, stacks, and commands. Helps define workflows. Called internally by /cq setup."
+    },
+    {
+      "name": "cq-worker",
+      "description": "Execute a single agent step in a cq workflow. Handles prompt assembly, model selection, agent spawning, heartbeat, resume, and result extraction."
+    },
+    {
+      "name": "cq",
+      "description": "Claudekiq workflow engine — start, resume, monitor workflows, setup projects. Use /cq to list and run workflows, /cq <workflow> to start one, /cq status for dashboard, /cq init or /cq setup to initialize."
+    }
+  ],
+  "scanned_at": "2026-03-16T20:03:35Z"
+}

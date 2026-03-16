@@ -19,7 +19,7 @@ cmd_scan() {
     )
   ')
 
-  _merge_scan_results "$agents" "$skills" "$stacks" "$commands"
+  _merge_scan_results "$stacks"
 
   # Validate workflows and collect warnings
   local workflow_warnings
@@ -430,7 +430,7 @@ _scan_validate_workflows() {
 }
 
 _merge_scan_results() {
-  local agents="$1" skills="$2" stacks="${3:-"[]"}" commands="${4:-"[]"}"
+  local stacks="${1:-"[]"}"
   local settings_file="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
   local ts
   ts=$(cq_now)
@@ -440,14 +440,13 @@ _merge_scan_results() {
     existing=$(cat "$settings_file")
   fi
 
+  # Only cache stacks (detected from project files, not dynamic directories)
+  # Agents, skills, and commands are always discovered dynamically
   local updated
   updated=$(jq \
-    --argjson agents "$agents" \
-    --argjson skills "$skills" \
     --argjson stacks "$stacks" \
-    --argjson commands "$commands" \
     --arg ts "$ts" \
-    '. + {agents: $agents, skills: $skills, stacks: $stacks, commands: $commands, scanned_at: $ts} | del(.plugins) | del(.stack)' \
+    '. + {stacks: $stacks, scanned_at: $ts} | del(.plugins) | del(.stack) | del(.agents) | del(.skills) | del(.commands)' \
     <<< "$existing")
 
   echo "$updated" > "$settings_file"

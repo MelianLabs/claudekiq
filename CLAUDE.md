@@ -115,7 +115,8 @@ Safety hooks for git operations (force-push, reset --hard, rebase, commit) are d
 - Detects project stacks — returns `stacks` as an array (multi-stack support: e.g., Rails + React)
 - Each stack object has: `language`, `framework`, `test_command`, `build_command`, `lint_command`
 - Validates all workflows after scan — reports warnings for invalid ones
-- Writes results to `.claudekiq/settings.json` as `agents`, `skills`, `commands`, `stacks` arrays
+- Only `stacks` are cached in `.claudekiq/settings.json` (detected from project files like `package.json`, `Gemfile`, etc.)
+- Agents, skills, and commands are **never cached** — always discovered dynamically from `.claude/agents/`, `.claude/skills/`, `.claude/commands/`, and `.claude-plugin/plugin.json`
 - Preserves existing user config keys (including `agent_mappings`) during merge
 - Auto-runs on `cq init` (both fresh and re-init)
 
@@ -128,8 +129,9 @@ Agents are named after their stack: `@rails-dev`, `@react-dev`, `@go-dev`, etc. 
 Step types resolve via `cq_resolve_step_type()` in `lib/core.sh`:
 1. Built-in types (`bash`, `agent`, `skill`, `batch`, `parallel`, `workflow`) → returns `"builtin"`
 2. Agent-backed: `.claude/agents/<type>.md` file exists → returns `"agent"`
-3. Scan results: `agents` array in settings.json → returns `"agent"`
-4. Otherwise: returns `"unknown"` — **this is an error**. All step types must be explicitly defined.
+3. Otherwise: returns `"unknown"` — **this is an error**. All step types must be explicitly defined.
+
+Agents are **never cached** in `settings.json` — always discovered dynamically from `.claude/agents/`.
 
 ### Step Output Capture
 

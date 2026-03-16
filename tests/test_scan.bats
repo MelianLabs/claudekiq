@@ -10,11 +10,11 @@ teardown() { teardown_test_project; }
   mkdir -p .claude/agents
   cp "$FIXTURES/mock-agent.md" .claude/agents/test-agent.md
 
-  run "$CQ" scan
+  run "$CQ" scan --json
   [ "$status" -eq 0 ]
 
   local agent
-  agent=$(jq '.agents[] | select(.name == "test-agent")' .claudekiq/settings.json)
+  agent=$(echo "$output" | jq '.agents[] | select(.name == "test-agent")')
   [ "$(echo "$agent" | jq -r '.name')" = "test-agent" ]
   [ "$(echo "$agent" | jq -r '.model')" = "sonnet" ]
   [ "$(echo "$agent" | jq -r '.description')" = "A mock agent for testing scan discovery" ]
@@ -24,11 +24,11 @@ teardown() { teardown_test_project; }
   mkdir -p .claude/agents
   cp "$FIXTURES/mock-agent.md" .claude/agents/test-agent.md
 
-  run "$CQ" scan
+  run "$CQ" scan --json
   [ "$status" -eq 0 ]
 
   local tools
-  tools=$(jq -r '.agents[0].tools | join(",")' .claudekiq/settings.json)
+  tools=$(echo "$output" | jq -r '.agents[0].tools | join(",")')
   [[ "$tools" == *"Read"* ]]
   [[ "$tools" == *"Edit"* ]]
 }
@@ -44,11 +44,11 @@ model: haiku
 No name in frontmatter.
 EOF
 
-  run "$CQ" scan
+  run "$CQ" scan --json
   [ "$status" -eq 0 ]
 
   local agent
-  agent=$(jq '.agents[] | select(.name == "my-custom-agent")' .claudekiq/settings.json)
+  agent=$(echo "$output" | jq '.agents[] | select(.name == "my-custom-agent")')
   [ "$(echo "$agent" | jq -r '.name')" = "my-custom-agent" ]
 }
 
@@ -67,15 +67,15 @@ EOF
   mkdir -p .claude/agents
   cp "$FIXTURES/mock-agent.md" .claude/agents/test-agent.md
 
-  run "$CQ" scan
+  run "$CQ" scan --json
   [ "$status" -eq 0 ]
 
   # User config preserved
   [ "$(jq -r '.concurrency' .claudekiq/settings.json)" = "3" ]
-  # Scan results present
-  [ "$(jq '.agents | length' .claudekiq/settings.json)" -ge 1 ]
+  # Agents in scan output (not cached in settings)
+  [ "$(echo "$output" | jq '.agents | length')" -ge 1 ]
   local found
-  found=$(jq -r '.agents[] | select(.name == "test-agent") | .name' .claudekiq/settings.json)
+  found=$(echo "$output" | jq -r '.agents[] | select(.name == "test-agent") | .name')
   [ "$found" = "test-agent" ]
 }
 
@@ -114,10 +114,10 @@ EOF
 @test "scan handles missing agents dir" {
   rm -rf .claude/agents
 
-  run "$CQ" scan
+  run "$CQ" scan --json
   [ "$status" -eq 0 ]
 
-  [ "$(jq '.agents | length' .claudekiq/settings.json)" -eq 0 ]
+  [ "$(echo "$output" | jq '.agents | length')" -eq 0 ]
 }
 
 @test "scan handles malformed frontmatter" {
@@ -135,10 +135,10 @@ EOF
   # Remove agents to test empty state
   rm -rf .claude/agents
 
-  run "$CQ" scan
+  run "$CQ" scan --json
   [ "$status" -eq 0 ]
 
-  [ "$(jq '.agents | length' .claudekiq/settings.json)" -eq 0 ]
+  [ "$(echo "$output" | jq '.agents | length')" -eq 0 ]
 }
 
 @test "scan multiple agents" {
@@ -154,10 +154,10 @@ model: opus
 Second agent.
 EOF
 
-  run "$CQ" scan
+  run "$CQ" scan --json
   [ "$status" -eq 0 ]
 
-  [ "$(jq '.agents | length' .claudekiq/settings.json)" -ge 2 ]
+  [ "$(echo "$output" | jq '.agents | length')" -ge 2 ]
 }
 
 @test "scan fails outside cq project" {
@@ -225,10 +225,7 @@ EOF
   source=$(echo "$output" | jq -r '.skills[] | select(.name == "test-skill") | .source')
   [ "$source" = "plugin" ]
 
-  # Verify it's persisted in settings.json
-  local stored
-  stored=$(jq -r '.skills[] | select(.name == "test-skill") | .source' .claudekiq/settings.json)
-  [ "$stored" = "plugin" ]
+  # Skills are no longer cached in settings.json — only in scan output
 }
 
 @test "scan updates .claude/cq.md" {
@@ -277,10 +274,7 @@ EOF
   migrate_name=$(echo "$output" | jq -r '.commands[] | select(.name == "db-migrate") | .name')
   [ "$migrate_name" = "db-migrate" ]
 
-  # Verify persisted in settings.json
-  local stored_count
-  stored_count=$(jq '.commands | length' .claudekiq/settings.json)
-  [ "$stored_count" -ge 2 ]
+  # Commands are no longer cached in settings.json — only in scan output
 }
 
 @test "scan discovers commands without frontmatter" {
