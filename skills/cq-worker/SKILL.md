@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Agent, Skill, CronCreate, CronDelete
 ## Prerequisites
 If any required tool (Agent, Skill, etc.) is unavailable, report the error clearly and suggest running via CLI instead.
 
-You handle a single agent step within a cq workflow. You are invoked by the `/cq` runner to execute agent-type steps autonomously.
+You handle a single agent step within a cq workflow. You are invoked by `/cq-runner` to execute agent-type steps autonomously.
 
 ## Arguments
 
@@ -86,7 +86,7 @@ If `resume: true` AND visit count > 1 (this is a retry):
    ```
    Agent(resume: "<saved_agentId>", prompt: "Continuing from previous attempt. <assembled_prompt>")
    ```
-3. If resume fails (agent no longer available), clear the saved agentId and fall through to fresh spawn with note about retry
+3. If resume fails (agent no longer available), clear the saved agentId: `Bash(command: "cq ctx set _agent_<step_id> '' <run_id>")` and fall through to fresh spawn with note about retry
 
 ## Step 6: Spawn Agent
 

@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-export CQ_VERSION="3.2.5"
+export CQ_VERSION="3.2.6"
 
 # --- Resolve script location and source libs ---
 
@@ -101,6 +101,7 @@ case "$COMMAND" in
   # Workflow lifecycle
   start)          cmd_start "$@" ;;
   status)         cmd_status "$@" ;;
+  next)           cmd_next "$@" ;;
   list)           cmd_list "$@" ;;
   log)            cmd_log "$@" ;;
 

@@ -39,11 +39,15 @@ else
     curl -fsSL "${REPO_URL}/lib/${lib}" -o "${CQ_HOME}/lib/${lib}"
   done
   mkdir -p "${CQ_HOME}/lib/commands"
-  for cmd_lib in setup.sh scan.sh lifecycle.sh flow.sh steps.sh todos.sh ctx.sh dynamic.sh workflows.sh config.sh maintenance.sh; do
+  for cmd_lib in setup.sh scan.sh lifecycle.sh flow.sh steps.sh todos.sh ctx.sh dynamic.sh workflows.sh config.sh maintenance.sh hooks_internal.sh; do
     curl -fsSL "${REPO_URL}/lib/commands/${cmd_lib}" -o "${CQ_HOME}/lib/commands/${cmd_lib}"
   done
   mkdir -p "${CQ_HOME}/skills/cq"
   curl -fsSL "${REPO_URL}/skills/cq/SKILL.md" -o "${CQ_HOME}/skills/cq/SKILL.md"
+  mkdir -p "${CQ_HOME}/skills/cq-runner"
+  curl -fsSL "${REPO_URL}/skills/cq-runner/SKILL.md" -o "${CQ_HOME}/skills/cq-runner/SKILL.md"
+  mkdir -p "${CQ_HOME}/skills/cq-approve"
+  curl -fsSL "${REPO_URL}/skills/cq-approve/SKILL.md" -o "${CQ_HOME}/skills/cq-approve/SKILL.md"
   mkdir -p "${CQ_HOME}/skills/cq-worker"
   curl -fsSL "${REPO_URL}/skills/cq-worker/SKILL.md" -o "${CQ_HOME}/skills/cq-worker/SKILL.md"
   mkdir -p "${CQ_HOME}/skills/cq-setup"

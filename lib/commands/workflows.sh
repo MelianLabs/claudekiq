@@ -155,29 +155,41 @@ cmd_workflows_validate() {
     fi
   done <<< "$(jq -r '.steps[].type // empty' <<< "$wf_json" | sort -u)"
 
-  # Validate parallel steps have branches array
+  # Validate parallel/batch steps have branches array
   local parallel_errors
   parallel_errors=$(jq -r '
-    .steps[] | select(.type == "parallel") |
+    .steps[] | select(.type == "parallel" or .type == "batch") |
     if (.branches == null or (.branches | length) == 0) then
-      "Parallel step '\''\(.id)'\'': requires non-empty '\''branches'\'' array"
+      "\(.type | ascii_upcase | .[0:1] + .[1:] | sub("Parallel";"Parallel") | sub("Batch";"Batch")) step '\''\(.id)'\'': requires non-empty '\''branches'\'' array"
     else empty end
   ' <<< "$wf_json" 2>/dev/null)
   while IFS= read -r err; do
     [[ -n "$err" ]] && errors+=("$err")
   done <<< "$parallel_errors"
 
-  # Validate parallel branch definitions
+  # Validate parallel/batch branch definitions
   local branch_errors
   branch_errors=$(jq -r '
-    .steps[] | select(.type == "parallel") | .id as $pid |
+    .steps[] | select(.type == "parallel" or .type == "batch") | .id as $pid |
     .branches // [] | to_entries[] |
-    (if .value.id == null or .value.id == "" then "Parallel step '\''\($pid)'\'' branch \(.key): missing '\''id'\''" else empty end),
-    (if .value.type == null or .value.type == "" then "Parallel step '\''\($pid)'\'' branch '\''\(.value.id // .key)'\'': missing '\''type'\''" else empty end)
+    (if .value.id == null or .value.id == "" then "Step '\''\($pid)'\'' branch \(.key): missing '\''id'\''" else empty end),
+    (if .value.type == null or .value.type == "" then "Step '\''\($pid)'\'' branch '\''\(.value.id // .key)'\'': missing '\''type'\''" else empty end)
   ' <<< "$wf_json" 2>/dev/null)
   while IFS= read -r err; do
     [[ -n "$err" ]] && errors+=("$err")
   done <<< "$branch_errors"
+
+  # Validate skill steps have target field
+  local skill_errors
+  skill_errors=$(jq -r '
+    .steps[] | select(.type == "skill") |
+    if (.target == null or .target == "") then
+      "Skill step '\''\(.id)'\'': requires '\''target'\'' field (skill name to invoke)"
+    else empty end
+  ' <<< "$wf_json" 2>/dev/null)
+  while IFS= read -r err; do
+    [[ -n "$err" ]] && errors+=("$err")
+  done <<< "$skill_errors"
 
   # Validate workflow steps have template field
   local workflow_errors

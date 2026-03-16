@@ -136,7 +136,7 @@ cmd_start() {
 
   # Add branch state for parallel steps
   local parallel_info
-  parallel_info=$(jq -c '[.[] | select(.type == "parallel" and .branches != null and (.branches | length) > 0) | {id, branches}]' <<< "$steps")
+  parallel_info=$(jq -c '[.[] | select((.type == "parallel" or .type == "batch") and .branches != null and (.branches | length) > 0) | {id, branches}]' <<< "$steps")
   if [[ "$parallel_info" != "[]" ]]; then
     state=$(jq --argjson psteps "$parallel_info" '
       reduce ($psteps[] | .id as $pid | .branches as $br |
@@ -242,6 +242,37 @@ _count_running_runs() {
     [[ "$status" == "running" ]] && count=$((count + 1))
   done
   echo "$count"
+}
+
+cmd_next() {
+  local run_id="${1:-}"
+  [[ -z "$run_id" ]] && cq_die "Usage: cq next <run_id>"
+  cq_require_run "$run_id" "cq next <run_id>" >/dev/null
+
+  local meta steps state
+  meta=$(cq_read_meta "$run_id")
+  steps=$(cq_read_steps "$run_id")
+  state=$(cq_read_state "$run_id")
+
+  local current_step
+  current_step=$(jq -r '.current_step // empty' <<< "$meta")
+  [[ -z "$current_step" ]] && cq_die "No current step for run ${run_id}"
+
+  local step step_index total
+  step=$(jq --arg id "$current_step" '.[] | select(.id == $id)' <<< "$steps")
+  step_index=$(jq --arg id "$current_step" '[.[] | .id] | to_entries[] | select(.value == $id) | .key' <<< "$steps")
+  total=$(jq 'length' <<< "$steps")
+
+  if [[ "$CQ_JSON" == "true" ]]; then
+    jq -cn --arg id "$current_step" --argjson step "$step" \
+      --argjson index "$step_index" --argjson total "$total" \
+      '{step_id:$id, step:$step, index:$index, total:$total}'
+  else
+    local step_name step_type
+    step_name=$(jq -r '.name // .id' <<< "$step")
+    step_type=$(jq -r '.type' <<< "$step")
+    echo "Step $((step_index + 1))/${total}: ${step_name} (${step_type})"
+  fi
 }
 
 cmd_status() {

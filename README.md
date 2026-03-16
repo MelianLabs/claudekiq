@@ -6,10 +6,12 @@ A filesystem-backed workflow engine for Claude Code. Think Sidekiq, but for orch
 
 Claudekiq (`cq`) lets you define multi-step workflows as YAML that coordinate Claude Code agents, shell commands, and human approvals. Workflows run with persistent filesystem state, automatic retries, priority queuing, and human-in-the-loop gates when decisions can't be automated.
 
-It ships with three Claude Code skills:
-- **`/cq`** — Workflow runner that drives workflows to completion automatically
+It ships with five Claude Code skills:
+- **`/cq`** — Entry point: start, resume, and monitor workflows
+- **`/cq-runner`** — Execution loop: dispatches steps, manages flow
+- **`/cq-approve`** — Gate handler: presents approvals and escalations to users
 - **`/cq-worker`** — Agent step executor with heartbeat, resume, and result extraction
-- **`/cq-setup`** — Smart project setup that generates workflows from your project's agents and stacks
+- **`/cq-setup`** — Smart project discovery and optional workflow generation
 
 It also works as an MCP plugin, exposing all commands as native Claude Code tools.
 
@@ -407,7 +409,7 @@ Project settings override global. You can set:
 ~/.cq/                     # Global installation
   bin/cq                   # CLI binary
   lib/*.sh                 # Library files
-  skills/                  # Skill definitions (cq, cq-worker, cq-setup)
+  skills/                  # Skill definitions (cq, cq-runner, cq-approve, cq-worker, cq-setup)
   config.json              # Global config
   workflows/               # Shared workflows
 

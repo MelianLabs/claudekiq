@@ -26,7 +26,7 @@ teardown() {
   "$CQ" init >/dev/null
   [ -f .claude-plugin/plugin.json ]
   jq -e '.name == "claudekiq"' .claude-plugin/plugin.json
-  jq -e '.skills | length == 3' .claude-plugin/plugin.json
+  jq -e '.skills | length == 5' .claude-plugin/plugin.json
 }
 
 @test "plugin.json version matches CQ_VERSION" {
@@ -46,14 +46,14 @@ teardown() {
   mv .claude-plugin/plugin.json.tmp .claude-plugin/plugin.json
   local count_before
   count_before=$(jq '.skills | length' .claude-plugin/plugin.json)
-  [ "$count_before" -eq 4 ]
+  [ "$count_before" -eq 6 ]
   # Re-init
   "$CQ" init >/dev/null
   # User skill should be preserved
   jq -e '.skills | any(. == "/custom/my-skill")' .claude-plugin/plugin.json
   local count_after
   count_after=$(jq '.skills | length' .claude-plugin/plugin.json)
-  [ "$count_after" -eq 4 ]
+  [ "$count_after" -eq 6 ]
 }
 
 @test "init does not create .claude/skills" {
@@ -241,34 +241,27 @@ AGENT
   echo "$output" | jq -e '.agents_found != null'
 }
 
-@test "cq.md includes usage patterns section" {
+@test "cq.md includes skills section" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null
-  grep -q 'Usage Patterns' .claude/cq.md
+  grep -q 'Skills' .claude/cq.md
+  grep -q 'cq-runner' .claude/cq.md
+  grep -q 'cq-approve' .claude/cq.md
 }
 
-@test "cq.md includes step summaries when workflows exist" {
+@test "cq.md includes workflow names when workflows exist" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null
   cp "$FIXTURES"/minimal.yml .claudekiq/workflows/
   "$CQ" init >/dev/null
-  grep -q 'Steps:' .claude/cq.md
+  grep -q 'minimal' .claude/cq.md
 }
 
-@test "cq.md includes custom commands section" {
+@test "cq.md includes quick start line" {
   cd "$TEST_DIR"
   "$CQ" init >/dev/null
-  mkdir -p .claude/commands
-  cat > .claude/commands/deploy.md <<'CMD'
----
-name: deploy
-description: "Deploy to production"
----
-Deploy content.
-CMD
-  "$CQ" init >/dev/null
-  grep -q 'Custom Commands' .claude/cq.md
-  grep -q 'deploy' .claude/cq.md
+  grep -q '/cq' .claude/cq.md
+  grep -q 'status' .claude/cq.md
 }
 
 @test "hooks detect git force-push pattern" {

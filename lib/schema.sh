@@ -3,7 +3,7 @@
 
 # Single source of truth for MCP-exposed commands (used by mcp.sh too)
 cq_command_list() {
-  echo "start status list log pause resume cancel retry step-done skip todos todo ctx add-step add-steps set-next workflows heartbeat check-stale cleanup scan hooks"
+  echo "start status next list log pause resume cancel retry step-done skip todos todo ctx add-step add-steps set-next workflows heartbeat check-stale cleanup scan hooks"
 }
 
 # Compact schema data for all commands.
@@ -13,6 +13,7 @@ _cq_schema_data() {
   cat <<'SCHEMA'
 {
   "start":{"d":"Start a new workflow run from a template. Workflows support prompt/context fields on agent steps, params section, and model validation.","u":"cq start <template> [--key=val]...","p":["template"],"a":[["template","string",true,"Workflow template name"],["--key=val","string",false,"Context variables (repeatable)"],["--priority","string",false,"Priority level (urgent|high|normal|low)"]],"f":["--json","--headless"],"e":["cq start feature --story_id=12345 --stack=rails","cq start bugfix --story_id=67890 --json"],"n":{"step_fields":"Steps support: prompt (agent goal), context (list of context keys), model (opus|sonnet|haiku), resume (boolean), outputs (expected output keys)","params":"Top-level params section documents workflow parameters for interactive prompting"}},
+  "next":{"d":"Show the current step definition for a running workflow","u":"cq next <run_id>","p":["run_id"],"a":[["run_id","string",true,"Run ID"]],"f":["--json"],"e":["cq next a1b2c3d4","cq next a1b2c3d4 --json"]},
   "status":{"d":"Show dashboard (no args) or detailed run status","u":"cq status [run_id]","p":["run_id"],"a":[["run_id","string",false,"Run ID for detailed status"]],"f":["--json"],"e":["cq status","cq status a1b2c3d4 --json"]},
   "list":{"d":"List all workflow runs","u":"cq list","p":[],"a":[],"f":["--json"],"e":["cq list","cq list --json"]},
   "log":{"d":"Show event log for a run","u":"cq log <run_id> [--tail N]","p":["run_id"],"a":[["run_id","string",true,"Run ID"],["--tail","integer",false,"Show last N entries"]],"f":["--json"],"e":["cq log a1b2c3d4","cq log a1b2c3d4 --tail 5"]},

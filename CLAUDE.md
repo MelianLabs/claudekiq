@@ -59,7 +59,7 @@ All run state lives in `.claudekiq/runs/<run_id>/` (gitignored):
 
 ### Key Concepts
 
-- **Step types**: `bash`, `agent`, `skill` (built-in), plus convention-based custom types (any unrecognized type name is treated as an agent step with semantic context)
+- **Step types**: `bash`, `agent`, `skill`, `batch`, `parallel` (built-in), plus convention-based custom types (any unrecognized type name is treated as an agent step with semantic context). `batch` delegates to Claude Code's `/batch` for parallel execution; `parallel` is a deprecated alias for `batch`.
 - **Gates**: `auto` (continue), `human` (wait for approval via `AskUserQuestion` — replaces old `manual` type), `review` (retry loop with max_visits escalation)
 - **Interpolation**: `{{expr}}` in bash targets only, resolved from context via jq. Agent steps receive raw prompt + context — Claude decides how to use it. Supports nested access (`{{config.timeout}}`), array indexing (`{{items[0].name}}`), and jq expressions (`{{results | length}}`).
 - **Config resolution**: global (`~/.cq/config.json`) merged with project (`.claudekiq/settings.json`), project wins
@@ -211,7 +211,7 @@ Hints are suppressed in `--json` mode. Helper: `cq_hint()` in `lib/core.sh`.
 
 ### Skill Integration with Claude Code
 
-Skills (`/cq`, `/cq-worker`, `/cq-setup`) use precise tool call patterns for reliable Claude Code integration:
+Skills (`/cq`, `/cq-runner`, `/cq-approve`, `/cq-worker`, `/cq-setup`) use precise tool call patterns for reliable Claude Code integration:
 - **Task mirroring**: MANDATORY TaskCreate on workflow start, TaskUpdate on step progress/completion
 - **TODO sync**: Lazy sync at explicit points — session start, gate events, workflow completion
 - **Gates**: Exact AskUserQuestion patterns with options for approve/reject/override
