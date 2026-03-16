@@ -68,11 +68,11 @@ cq init
 This creates:
 - `.claudekiq/` — project directory (workflows, settings, runs)
 - `.claudekiq/workflows/` — where you put workflow YAML files
-- `.claude-plugin/plugin.json` — plugin manifest (version auto-synced, user skills preserved on re-init)
+- `.claude/commands/` — symlinks to `~/.cq/skills/` so Claude Code discovers `/cq` natively
 - `.claude/settings.json` — hooks for safety checks and context staging
 - `.claude/cq.md` — auto-generated context file with workflows, agents, stacks, and usage patterns
 
-Init is smart — it auto-scans for agents, skills, and stacks, reports what it found, and suggests next steps. Run `/cq-setup` inside Claude Code to generate customized workflows, or just start with `/cq-setup` directly (it self-initializes if needed).
+Init is smart — it auto-scans for agents, skills, and stacks, reports what it found, and suggests next steps. Run `/cq setup` inside Claude Code to discover your project and create customized workflows.
 
 ### 2. Create a workflow
 
@@ -156,7 +156,7 @@ A workflow is a YAML file with **steps**. Each step has:
 | Field | Description |
 |-------|-------------|
 | `id` | Unique identifier |
-| `type` | How to execute: `bash`, `agent`, `skill`, `parallel`, `workflow`, or convention-based custom name |
+| `type` | How to execute: `bash`, `agent`, `skill`, `batch`, `workflow`, or a known agent name |
 | `target` | What to execute (command, agent role, skill name) |
 | `prompt` | Goal description for agent steps |
 | `gate` | What happens after: `auto`, `human`, `review` |
@@ -166,9 +166,8 @@ A workflow is a YAML file with **steps**. Each step has:
 - **`bash`** — Run a shell command. Pass on exit 0, fail otherwise. Supports `{{variable}}` interpolation.
 - **`agent`** — AI task. Use `@agent-name` to target a specific agent, or leave empty for inline execution. Supports `isolation: worktree`.
 - **`skill`** — Invoke a Claude Code skill (e.g., `/commit`, `/review`).
-- **`parallel`** — Run multiple branches concurrently via Claude Code's `/batch` skill.
+- **`batch`** — Run multiple branches concurrently via Claude Code's `/batch` skill (`parallel` is a deprecated alias).
 - **`workflow`** — Start a sub-workflow with context mapping and output propagation.
-- **Convention-based** — Any custom type name (e.g., `review`, `deploy`, `migrate`) is treated as an agent step with semantic context.
 
 ### Gates
 
@@ -418,9 +417,8 @@ Project settings override global. You can set:
   workflows/               # Workflow definitions (committed)
     private/               # Private workflows (gitignored)
   runs/                    # Run state (gitignored)
-.claude-plugin/
-  plugin.json              # Plugin manifest (points to ~/.cq/skills/)
 .claude/
+  commands/                # Symlinks to ~/.cq/skills/ (auto-created by cq init)
   settings.json            # Hooks (auto-installed by cq init)
   cq.md                    # Auto-generated project context
 ```
