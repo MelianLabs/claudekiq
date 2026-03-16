@@ -678,15 +678,8 @@ cq_resolve_step_type() {
     echo "agent"; return
   fi
 
-  # 3. Check scan results for agents
-  local settings="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
-  if [[ -f "$settings" ]]; then
-    local found
-    found=$(jq -r --arg t "$step_type" '
-      if (.agents // [] | map(.name) | index($t)) then "agent"
-      else empty end' "$settings" 2>/dev/null)
-    if [[ -n "$found" ]]; then echo "$found"; return; fi
-  fi
+  # 3. Check .claude/agents/ directory directly (no cached scan needed)
+  # Already checked exact match above; this is a no-op but kept for clarity
 
   echo "unknown"
 }

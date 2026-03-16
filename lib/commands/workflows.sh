@@ -530,10 +530,11 @@ _validate_agent_targets_check() {
   targets=$(jq -r '.steps[] | select(.type == "agent") | .target // "" | select(startswith("@")) | ltrimstr("@")' <<< "$wf_json" 2>/dev/null)
   [[ -z "$targets" ]] && return 0
 
-  local settings_file="${CQ_PROJECT_ROOT}/.claudekiq/settings.json"
+  # Discover available agents from .claude/agents/ directory
   local available_agents=""
-  if [[ -f "$settings_file" ]]; then
-    available_agents=$(jq -r '.agents // [] | .[].name' "$settings_file" 2>/dev/null)
+  local agents_dir="${CQ_PROJECT_ROOT}/.claude/agents"
+  if [[ -d "$agents_dir" ]]; then
+    available_agents=$(cd "$agents_dir" && ls -1 *.md 2>/dev/null | sed 's/\.md$//')
   fi
 
   local target
