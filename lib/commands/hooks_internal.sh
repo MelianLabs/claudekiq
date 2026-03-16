@@ -88,18 +88,24 @@ cmd__stage_context() {
     cq_with_lock "$run_dir" _cq_ctx_set_locked "$run_dir" "_diff_summary" "$diff_summary"
   fi
 
-  # Update step state: append to files array
+  # Update step state: append to files array (under lock to avoid racing with step-done)
   if [[ -n "$all_files" ]]; then
-    local state files_json
+    local files_json
     files_json=$(echo "$all_files" | jq -R -s 'split("\n") | map(select(. != ""))')
-    state=$(cq_read_state "$run_id")
-    state=$(jq --arg id "$current_step" --argjson files "$files_json" '
-      .[$id].files = ((.[$id].files // []) + $files | unique)
-    ' <<< "$state")
-    cq_write_json "${run_dir}/state.json" "$state"
+    cq_with_lock "$run_dir" _cq_stage_files_locked "$run_dir" "$current_step" "$files_json"
   fi
 
   exit 0
+}
+
+_cq_stage_files_locked() {
+  local run_dir="$1" step_id="$2" files_json="$3"
+  local state
+  state=$(cq_read_json "${run_dir}/state.json")
+  state=$(jq --arg id "$step_id" --argjson files "$files_json" '
+    .[$id].files = ((.[$id].files // []) + $files | unique)
+  ' <<< "$state")
+  cq_write_json "${run_dir}/state.json" "$state"
 }
 
 # Safety check: read per-operation policy and exit accordingly

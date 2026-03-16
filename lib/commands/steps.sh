@@ -147,24 +147,24 @@ _step_done_locked() {
     "$(jq -cn --arg step "$step_id" --arg result "$outcome" --argjson visits "$visits" --argjson files "$step_files" --arg output "$log_output" \
       '{step:$step, result:$result, visits:$visits, files:$files} + (if $output != "" then {output:$output} else {} end)')"
 
-  # Extract outputs if step defines them
-  _extract_outputs "$run_id" "$step_id" "$result_json"
-
-  # Handle gate logic
+  # Load step definition once for outputs + gate handling
   local step
   step=$(cq_get_step "$run_id" "$step_id")
+
+  # Extract outputs if step defines them
+  _extract_outputs_from_step "$step" "$run_id" "$step_id" "$result_json"
+
+  # Handle gate logic
   local gate
   gate=$(jq -r '.gate // "auto"' <<< "$step")
 
-  _handle_gate "$run_id" "$step_id" "$outcome" "$gate" "$visits"
+  _handle_gate "$run_id" "$step_id" "$outcome" "$gate" "$visits" "$step"
 }
 
-_extract_outputs() {
-  local run_id="$1" step_id="$2" result_json="$3"
+_extract_outputs_from_step() {
+  local step="$1" run_id="$2" step_id="$3" result_json="$4"
   [[ "$result_json" == "null" ]] && return
 
-  local step
-  step=$(cq_get_step "$run_id" "$step_id")
   local outputs_type
   outputs_type=$(jq -r '.outputs | type' <<< "$step")
 
@@ -194,7 +194,7 @@ _extract_outputs() {
 }
 
 _handle_gate() {
-  local run_id="$1" step_id="$2" outcome="$3" gate="$4" visits="$5"
+  local run_id="$1" step_id="$2" outcome="$3" gate="$4" visits="$5" step="${6:-}"
   local run_dir
   run_dir=$(cq_run_dir "$run_id")
 
@@ -207,7 +207,11 @@ _handle_gate() {
         _advance_run "$run_id" "$step_id" "pass"
       else
         local desc
-        desc=$(cq_get_step "$run_id" "$step_id" | jq -r '.description // .name // .id')
+        if [[ -n "$step" ]]; then
+          desc=$(jq -r '.description // .name // .id' <<< "$step")
+        else
+          desc=$(cq_get_step "$run_id" "$step_id" | jq -r '.description // .name // .id')
+        fi
         cq_create_todo "$run_id" "$step_id" "review" "$desc"
         cq_update_meta "$run_id" '.status = "gated"'
         cq_log_event "$run_dir" "gate_human" \
@@ -220,7 +224,7 @@ _handle_gate() {
       if [[ "$outcome" == "pass" ]]; then
         _advance_run "$run_id" "$step_id" "pass"
       else
-        _handle_review_failure "$run_id" "$step_id" "$visits"
+        _handle_review_failure "$run_id" "$step_id" "$visits" "$step"
       fi
       ;;
     *)
@@ -230,12 +234,14 @@ _handle_gate() {
 }
 
 _handle_review_failure() {
-  local run_id="$1" step_id="$2" visits="$3"
+  local run_id="$1" step_id="$2" visits="$3" step="${4:-}"
   local run_dir
   run_dir=$(cq_run_dir "$run_id")
 
-  local step max_visits
-  step=$(cq_get_step "$run_id" "$step_id")
+  local max_visits
+  if [[ -z "$step" ]]; then
+    step=$(cq_get_step "$run_id" "$step_id")
+  fi
   max_visits=$(jq -r '.max_visits // 0' <<< "$step")
   max_visits=${max_visits:-0}
 

@@ -127,26 +127,24 @@ cmd_start() {
   steps=$(jq '.steps' <<< "$wf_json")
   cq_write_json "${run_dir}/steps.json" "$steps"
 
-  # Write state.json (initialize all steps as pending)
-  local state='{}'
-  local step_id
-  for step_id in $(jq -r '.[].id' <<< "$steps"); do
-    state=$(jq --arg id "$step_id" \
-      '.[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null,"files":[]}' <<< "$state")
-  done
-  cq_write_json "${run_dir}/state.json" "$state"
+  # Write state.json (initialize all steps as pending, including parallel branch state)
+  local state
+  state=$(jq '
+    [.[].id] | reduce .[] as $id ({};
+      .[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null,"files":[]})
+  ' <<< "$steps")
 
-  # Initialize parallel step branch state
-  local step_type branches_json
-  for step_id in $(jq -r '.[].id' <<< "$steps"); do
-    step_type=$(jq -r --arg id "$step_id" '.[] | select(.id == $id) | .type' <<< "$steps")
-    if [[ "$step_type" == "parallel" ]]; then
-      branches_json=$(jq -r --arg id "$step_id" '.[] | select(.id == $id) | .branches // []' <<< "$steps")
-      if [[ "$branches_json" != "[]" && "$branches_json" != "null" ]]; then
-        cq_parallel_init_state "$run_id" "$step_id" "$branches_json"
-      fi
-    fi
-  done
+  # Add branch state for parallel steps
+  local parallel_info
+  parallel_info=$(jq -c '[.[] | select(.type == "parallel" and .branches != null and (.branches | length) > 0) | {id, branches}]' <<< "$steps")
+  if [[ "$parallel_info" != "[]" ]]; then
+    state=$(jq --argjson psteps "$parallel_info" '
+      reduce ($psteps[] | .id as $pid | .branches as $br |
+        {key: $pid, value: ([($br // [])[] | {key: .id, value: {"status":"pending","result":null}}] | from_entries)}
+      ) as $p (.; .[$p.key].branches = $p.value)
+    ' <<< "$state")
+  fi
+  cq_write_json "${run_dir}/state.json" "$state"
 
   # Initialize log
   touch "${run_dir}/log.jsonl"
@@ -284,11 +282,7 @@ _status_dashboard() {
   done
 
   local runs_json
-  if [[ ${#run_metas[@]} -gt 0 ]]; then
-    runs_json=$(printf '%s\n' "${run_metas[@]}" | jq -s '.')
-  else
-    runs_json="[]"
-  fi
+  runs_json=$(cq_items_to_json "${run_metas[@]+"${run_metas[@]}"}")
 
   if [[ "$CQ_JSON" == "true" ]]; then
     local todos
@@ -376,11 +370,7 @@ cmd_list() {
   done
 
   local runs_json
-  if [[ ${#run_items[@]} -gt 0 ]]; then
-    runs_json=$(printf '%s\n' "${run_items[@]}" | jq -s '.')
-  else
-    runs_json="[]"
-  fi
+  runs_json=$(cq_items_to_json "${run_items[@]+"${run_items[@]}"}")
 
   if [[ "$CQ_JSON" == "true" ]]; then
     jq '.' <<< "$runs_json"
@@ -424,17 +414,10 @@ cmd_log() {
       jq -s '.' "$log_file"
     fi
   else
-    local line
     if [[ -n "$tail_n" ]]; then
       tail -n "$tail_n" "$log_file"
     else
       cat "$log_file"
-    fi | while IFS= read -r line; do
-      local ts event data_str
-      ts=$(jq -r '.ts' <<< "$line")
-      event=$(jq -r '.event' <<< "$line")
-      data_str=$(jq -c '.data // {}' <<< "$line")
-      printf "  %s  %-20s %s\n" "$ts" "$event" "$data_str"
-    done
+    fi | jq -r '"  \(.ts)  \(.event | . + " " * (20 - length))  \(.data // {} | tostring)"'
   fi
 }

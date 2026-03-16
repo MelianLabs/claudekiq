@@ -476,9 +476,9 @@ cq_safety_policy() {
     relaxed) echo "warn"; return ;;
   esac
 
-  # If safety is an object, look up the specific operation
+  # If safety is an object, look up the specific operation from the already-read value
   local policy
-  policy=$(jq -r --arg op "$operation" '.safety[$op] // empty' "$settings_file" 2>/dev/null)
+  policy=$(jq -r --arg op "$operation" '.[$op] // empty' <<< "$safety_val" 2>/dev/null)
   if [[ -n "$policy" ]]; then
     echo "$policy"
   else

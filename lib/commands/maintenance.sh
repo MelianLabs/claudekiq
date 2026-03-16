@@ -88,11 +88,7 @@ cmd_check_stale() {
   done
 
   local stale_json count
-  if [[ ${#stale_items[@]} -gt 0 ]]; then
-    stale_json=$(printf '%s\n' "${stale_items[@]}" | jq -s '.')
-  else
-    stale_json="[]"
-  fi
+  stale_json=$(cq_items_to_json "${stale_items[@]+"${stale_items[@]}"}")
   count=${#stale_items[@]}
 
   if [[ "$CQ_JSON" == "true" ]]; then
