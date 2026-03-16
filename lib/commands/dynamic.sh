@@ -140,11 +140,13 @@ _add_steps_locked() {
 
   cq_write_steps "$run_id" "$steps"
 
-  # Initialize state for all new steps
-  local sid
-  for sid in $(jq -r '.[].id' <<< "$sub_steps"); do
-    cq_init_step_state "$run_id" "$sid"
-  done
+  # Initialize state for all new steps in a single read-modify-write
+  local state
+  state=$(cq_read_state "$run_id")
+  state=$(jq --argjson new_steps "$sub_steps" '
+    reduce ($new_steps[].id) as $id (.; .[$id] = {"status":"pending","visits":0,"attempt":0,"result":null,"started_at":null,"finished_at":null,"files":[]})
+  ' <<< "$state")
+  cq_write_json "${run_dir}/state.json" "$state"
 
   cq_log_event "$run_dir" "steps_added" \
     "$(jq -cn --arg flow "$flow_template" --arg after "${after_step:-end}" '{flow:$flow, after:$after}')"

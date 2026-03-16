@@ -168,6 +168,9 @@ _extract_outputs_from_step() {
   local outputs_type
   outputs_type=$(jq -r '.outputs | type' <<< "$step")
 
+  # Build all output key-value pairs, then batch-write to context
+  local -a ctx_updates=()
+
   if [[ "$outputs_type" == "object" ]]; then
     # outputs is a map of ctx_key -> jq_filter
     local keys
@@ -178,7 +181,7 @@ _extract_outputs_from_step() {
       filter=$(jq -r --arg k "$key" '.outputs[$k]' <<< "$step")
       value=$(jq -r "$filter" <<< "$result_json" 2>/dev/null || echo "")
       if [[ -n "$value" && "$value" != "null" ]]; then
-        cq_ctx_set "$run_id" "$key" "$value"
+        ctx_updates+=("$(jq -cn --arg k "$key" --arg v "$value" '{k:$k, v:$v}')")
       fi
     done <<< "$keys"
   elif [[ "$outputs_type" == "array" ]]; then
@@ -187,9 +190,18 @@ _extract_outputs_from_step() {
     for key in $(jq -r '.outputs[]' <<< "$step"); do
       value=$(jq -r --arg k "$key" '.[$k] // empty' <<< "$result_json" 2>/dev/null)
       if [[ -n "$value" ]]; then
-        cq_ctx_set "$run_id" "$key" "$value"
+        ctx_updates+=("$(jq -cn --arg k "$key" --arg v "$value" '{k:$k, v:$v}')")
       fi
     done
+  fi
+
+  # Batch-write all context updates in a single locked operation
+  if [[ ${#ctx_updates[@]} -gt 0 ]]; then
+    local updates_json
+    updates_json=$(printf '%s\n' "${ctx_updates[@]}" | jq -s '.')
+    local run_dir
+    run_dir=$(cq_run_dir "$run_id")
+    cq_with_lock "$run_dir" _cq_batch_ctx_set_locked "$run_dir" "$updates_json"
   fi
 }
 

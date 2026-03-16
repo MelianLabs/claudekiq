@@ -78,6 +78,18 @@ _cq_ctx_set_locked() {
   cq_write_json "${run_dir}/ctx.json" "$ctx"
 }
 
+# Batch-set multiple context keys in a single locked write.
+# updates_json: array of {k: "key", v: "value"} objects
+_cq_batch_ctx_set_locked() {
+  local run_dir="$1" updates_json="$2"
+  local ctx
+  ctx=$(cq_read_json "${run_dir}/ctx.json")
+  ctx=$(jq --argjson updates "$updates_json" '
+    reduce ($updates[]) as $u (.; .[$u.k] = $u.v)
+  ' <<< "$ctx")
+  cq_write_json "${run_dir}/ctx.json" "$ctx"
+}
+
 # --- Steps ---
 
 cq_read_steps() {
@@ -273,6 +285,7 @@ cq_copy_context_map() {
 }
 
 # Copy outputs from child back to parent context under namespace
+# Batches all context updates into a single locked write.
 cq_copy_outputs_back() {
   local parent_run_id="$1" child_run_id="$2" step_id="$3" outputs_json="$4"
   local child_ctx
@@ -280,25 +293,36 @@ cq_copy_outputs_back() {
   local parent_run_dir
   parent_run_dir=$(cq_run_dir "$parent_run_id")
 
+  # Build updates as a single JSON object, then batch-write
+  local updates
   if [[ "$outputs_json" != "null" && "$outputs_json" != "{}" && -n "$outputs_json" ]]; then
     # Explicit output mapping: {parent_key: child_key}
-    local parent_key child_key value
-    while IFS= read -r parent_key; do
-      [[ -z "$parent_key" ]] && continue
-      child_key=$(jq -r --arg k "$parent_key" '.[$k]' <<< "$outputs_json")
-      value=$(jq -r --arg k "$child_key" '.[$k] // empty' <<< "$child_ctx")
-      [[ -n "$value" ]] && cq_ctx_set "$parent_run_id" "sub_${step_id}.${parent_key}" "$value"
-    done <<< "$(jq -r 'keys[]' <<< "$outputs_json")"
+    updates=$(jq --arg prefix "sub_${step_id}" --argjson mapping "$outputs_json" '
+      . as $ctx | $mapping | to_entries | map(
+        {key: ($prefix + "." + .key), value: ($ctx[.value] // null)}
+      ) | map(select(.value != null)) | from_entries
+    ' <<< "$child_ctx")
   else
-    # No explicit mapping: copy entire child context under sub_<step_id>
-    local key value
-    while IFS= read -r key; do
-      [[ -z "$key" ]] && continue
-      [[ "$key" == _* ]] && continue  # Skip internal keys
-      value=$(jq -r --arg k "$key" '.[$k] // empty' <<< "$child_ctx")
-      [[ -n "$value" ]] && cq_ctx_set "$parent_run_id" "sub_${step_id}.${key}" "$value"
-    done <<< "$(jq -r 'keys[]' <<< "$child_ctx")"
+    # No explicit mapping: copy entire child context under sub_<step_id> (skip _internal keys)
+    updates=$(jq --arg prefix "sub_${step_id}" '
+      to_entries | map(select(.key | startswith("_") | not)) |
+      map({key: ($prefix + "." + .key), value: .value}) |
+      map(select(.value != null and .value != "")) | from_entries
+    ' <<< "$child_ctx")
   fi
+
+  # Merge updates into parent context in a single locked write
+  if [[ -n "$updates" && "$updates" != "{}" ]]; then
+    cq_with_lock "$parent_run_dir" _cq_merge_ctx_locked "$parent_run_dir" "$updates"
+  fi
+}
+
+_cq_merge_ctx_locked() {
+  local run_dir="$1" updates="$2"
+  local ctx
+  ctx=$(cq_read_json "${run_dir}/ctx.json")
+  ctx=$(jq --argjson u "$updates" '. + $u' <<< "$ctx")
+  cq_write_json "${run_dir}/ctx.json" "$ctx"
 }
 
 # --- Workflow inheritance ---
