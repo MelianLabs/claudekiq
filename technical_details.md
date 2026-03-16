@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/MelianLabs/claudekiq/main/install.s
 The install script:
 1. Creates `~/.cq/bin/`, `~/.cq/lib/`, `~/.cq/skills/`, `~/.cq/workflows/`, `~/.cq/config.json`
 2. Downloads `cq` and library files, makes them executable
-3. Copies skill definitions (`cq`, `cq-agent`, `cq-setup`) to `~/.cq/skills/`
+3. Copies skill definitions (`cq`, `cq-worker`, `cq-setup`) to `~/.cq/skills/`
 4. Prints instructions to add `~/.cq/bin` to `$PATH`
 5. Runs `cq version` to confirm
 
@@ -44,7 +44,7 @@ Uninstall: `rm -rf ~/.cq` and remove the PATH entry.
     commands/               # Command modules (setup.sh, lifecycle.sh, steps.sh, etc.)
   skills/                   # Skill definitions
     cq/SKILL.md             # Workflow runner skill
-    cq-agent/SKILL.md       # Agent step executor skill
+    cq-worker/SKILL.md       # Agent step executor skill
     cq-setup/SKILL.md       # Smart project setup skill
   config.json               # Global defaults
   workflows/                # Shared workflow templates
@@ -257,7 +257,7 @@ remove:
 | Type | `target` | Execution |
 |------|----------|-----------|
 | `bash` | Shell command with `{{interpolation}}` | Bash tool. Exit 0 = pass. |
-| `agent` | Agent name (`@rails-dev`) or empty | Agent tool via `/cq-agent` skill |
+| `agent` | Agent name (`@rails-dev`) or empty | Agent tool via `/cq-worker` skill |
 | `skill` | Skill name (e.g., `/commit`) | Skill tool with interpolated args |
 | `parallel` | N/A (uses `branches`) | `/batch` skill for concurrent execution |
 | `workflow` | N/A (uses `template`) | Starts child workflow run |
@@ -441,9 +441,9 @@ The runner uses precise tool call patterns for reliable integration:
 - **TaskCreate/TaskUpdate** — MANDATORY at workflow start, step progress, and completion
 - **TodoWrite/TodoRead** — Lazy sync at session start, gate events, and workflow completion
 - **AskUserQuestion** — Exact patterns with options for approve/reject/override at gates
-- **Skill** — Dispatches agent steps to `/cq-agent`, parallel to `/batch`
+- **Skill** — Dispatches agent steps to `/cq-worker`, parallel to `/batch`
 
-### `/cq-agent` Agent Executor
+### `/cq-worker` Agent Executor
 
 Handles single agent steps with:
 - Exact `Agent()` tool call with subagent_type, model, isolation parameters

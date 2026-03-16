@@ -142,7 +142,7 @@ _install_plugin_json() {
   jq -cn --arg home "$cq_home" --arg ver "$CQ_VERSION" --argjson user_skills "$user_skills" '{
     name:"claudekiq", version:$ver,
     description:"Filesystem-backed workflow engine for Claude Code",
-    skills:([($home+"/skills/cq"),($home+"/skills/cq-agent"),($home+"/skills/cq-setup")] + $user_skills)
+    skills:([($home+"/skills/cq"),($home+"/skills/cq-worker"),($home+"/skills/cq-setup")] + $user_skills)
   }' > "${plugin_dir}/plugin.json"
 }
 
@@ -576,7 +576,7 @@ _generate_cq_md() {
     # Skills (always present)
     echo '## Skills'
     echo '- `/cq` — Run and monitor workflows'
-    echo '- `/cq-agent` — Execute agent steps (called by /cq runner)'
+    echo '- `/cq-worker` — Execute agent steps (called by /cq runner)'
     echo '- `/cq-setup` — Generate customized workflows for this project'
     echo ''
 

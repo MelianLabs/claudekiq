@@ -8,7 +8,7 @@ Claudekiq (`cq`) lets you define multi-step workflows as YAML that coordinate Cl
 
 It ships with three Claude Code skills:
 - **`/cq`** — Workflow runner that drives workflows to completion automatically
-- **`/cq-agent`** — Agent step executor with heartbeat, resume, and result extraction
+- **`/cq-worker`** — Agent step executor with heartbeat, resume, and result extraction
 - **`/cq-setup`** — Smart project setup that generates workflows from your project's agents and stacks
 
 It also works as an MCP plugin, exposing all commands as native Claude Code tools.
@@ -51,7 +51,7 @@ bash install.sh
 
 ```bash
 cq version
-# cq 3.2.2
+# cq 3.2.3
 ```
 
 ## Getting Started
@@ -407,7 +407,7 @@ Project settings override global. You can set:
 ~/.cq/                     # Global installation
   bin/cq                   # CLI binary
   lib/*.sh                 # Library files
-  skills/                  # Skill definitions (cq, cq-agent, cq-setup)
+  skills/                  # Skill definitions (cq, cq-worker, cq-setup)
   config.json              # Global config
   workflows/               # Shared workflows
 

@@ -44,8 +44,8 @@ else
   done
   mkdir -p "${CQ_HOME}/skills/cq"
   curl -fsSL "${REPO_URL}/skills/cq/SKILL.md" -o "${CQ_HOME}/skills/cq/SKILL.md"
-  mkdir -p "${CQ_HOME}/skills/cq-agent"
-  curl -fsSL "${REPO_URL}/skills/cq-agent/SKILL.md" -o "${CQ_HOME}/skills/cq-agent/SKILL.md"
+  mkdir -p "${CQ_HOME}/skills/cq-worker"
+  curl -fsSL "${REPO_URL}/skills/cq-worker/SKILL.md" -o "${CQ_HOME}/skills/cq-worker/SKILL.md"
   mkdir -p "${CQ_HOME}/skills/cq-setup"
   curl -fsSL "${REPO_URL}/skills/cq-setup/SKILL.md" -o "${CQ_HOME}/skills/cq-setup/SKILL.md"
 fi

@@ -131,9 +131,9 @@ Bash(command: "<interpolated_target>")
 - Capture stdout/stderr from the result for step-done reporting
 
 #### `agent`
-Dispatch to the `/cq-agent` sub-skill:
+Dispatch to the `/cq-worker` sub-skill:
 ```
-Skill(name: "cq-agent", args: "<run_id> <step_id>")
+Skill(name: "cq-worker", args: "<run_id> <step_id>")
 ```
 Read the sub-skill's response to determine outcome (`pass` or `fail`) and any context variables it set.
 
@@ -162,12 +162,12 @@ Delegates to Claude Code's built-in `/batch` skill:
 6. Parent step auto-completes when child finishes
 
 #### Convention-based type (any custom name)
-Treat as agent step. Dispatch: `Skill(name: "cq-agent", args: "<run_id> <step_id>")`
+Treat as agent step. Dispatch: `Skill(name: "cq-worker", args: "<run_id> <step_id>")`
 
 ### 5. Handle Timeouts
 If step has `timeout:`:
 - **bash**: `Bash(command: "timeout <seconds> <command>")`
-- **agent/skill**: `/cq-agent` handles timeout internally
+- **agent/skill**: `/cq-worker` handles timeout internally
 
 ### 6. Mark Step Complete
 
@@ -264,6 +264,6 @@ When `cq` CLI commands fail:
 - Always use `--json` when reading cq state
 - Never modify run files directly — use `cq` commands
 - The `cq` CLI handles routing, gates, and state — trust it
-- For agent steps: always dispatch to `/cq-agent`, never execute inline
+- For agent steps: always dispatch to `/cq-worker`, never execute inline
 - For bash steps: run exactly the interpolated command
 - Pause: `cq pause <run_id>` | Cancel: `cq cancel <run_id>` | Skip: `cq skip <run_id>`

@@ -4,5 +4,5 @@
   "description": "Filesystem-backed workflow engine for Claude Code",
   "author": "MelianLabs",
   "homepage": "https://github.com/MelianLabs/claudekiq",
-  "skills": ["../skills/cq", "../skills/cq-agent", "../skills/cq-setup"]
+  "skills": ["../skills/cq", "../skills/cq-worker", "../skills/cq-setup"]
 }

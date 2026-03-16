@@ -1,5 +1,5 @@
 ---
-name: cq-agent
+name: cq-worker
 description: "Execute a single agent step in a cq workflow. Handles prompt assembly, model selection, agent spawning, heartbeat, resume, and result extraction."
 argument-hint: "<run_id> <step_id>"
 allowed-tools: Bash, Read, Agent, Skill, CronCreate, CronDelete

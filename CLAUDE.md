@@ -211,7 +211,7 @@ Hints are suppressed in `--json` mode. Helper: `cq_hint()` in `lib/core.sh`.
 
 ### Skill Integration with Claude Code
 
-Skills (`/cq`, `/cq-agent`, `/cq-setup`) use precise tool call patterns for reliable Claude Code integration:
+Skills (`/cq`, `/cq-worker`, `/cq-setup`) use precise tool call patterns for reliable Claude Code integration:
 - **Task mirroring**: MANDATORY TaskCreate on workflow start, TaskUpdate on step progress/completion
 - **TODO sync**: Lazy sync at explicit points — session start, gate events, workflow completion
 - **Gates**: Exact AskUserQuestion patterns with options for approve/reject/override
