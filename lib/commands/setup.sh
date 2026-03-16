@@ -46,7 +46,8 @@ cmd_init() {
     } >> "$gitignore"
   fi
 
-  # Common post-init: plugin, MCP, scan, hooks, cq.md
+  # Common post-init: commands, plugin, MCP, scan, hooks, cq.md
+  _install_commands "$project_dir"
   _install_plugin_json "$project_dir"
 
   if $install_mcp; then
@@ -97,6 +98,23 @@ _init_discovery_hints() {
   else
     cq_hint "Run /cq setup to discover your project and create customized workflows."
   fi
+}
+
+_install_commands() {
+  local project_dir="$1"
+  local cq_home="${HOME}/.cq"
+  local commands_dir="${project_dir}/.claude/commands"
+  mkdir -p "$commands_dir"
+
+  # Copy skill definitions as Claude Code custom commands
+  local skill_name
+  for skill_name in cq cq-runner cq-approve cq-worker cq-setup; do
+    local src="${cq_home}/skills/${skill_name}/SKILL.md"
+    local dest="${commands_dir}/${skill_name}.md"
+    if [[ -f "$src" ]]; then
+      cp "$src" "$dest"
+    fi
+  done
 }
 
 _install_plugin_json() {
