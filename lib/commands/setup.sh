@@ -19,72 +19,39 @@ cmd_init() {
     esac
   done
 
+  local init_status="initialized"
   if [[ -d "${project_dir}/.claudekiq" ]]; then
-    # Already initialized — update plugin.json and gitignore in case of upgrades
-    _install_plugin_json "$project_dir"
+    init_status="exists"
+  else
+    mkdir -p "${project_dir}/.claudekiq/workflows/private"
+    mkdir -p "${project_dir}/.claudekiq/runs"
 
-    # Install MCP config only if explicitly requested
-    if $install_mcp; then
-      _install_mcp_config "$project_dir"
+    # Create default settings.json
+    echo '{}' > "${project_dir}/.claudekiq/settings.json"
+
+    # Append to .gitignore
+    local gitignore="${project_dir}/.gitignore"
+    local needs_private=true
+    local needs_runs=true
+    if [[ -f "$gitignore" ]]; then
+      grep -qF '.claudekiq/workflows/private/' "$gitignore" && needs_private=false
+      grep -qF '.claudekiq/runs/' "$gitignore" && needs_runs=false
     fi
-
-    # Auto-scan for agents and skills
-    CQ_PROJECT_ROOT="$project_dir" cmd_scan >/dev/null 2>&1 || true
-
-    # Auto-install hooks
-    CQ_PROJECT_ROOT="$project_dir" _hooks_install >/dev/null 2>&1 || true
-
-    # Generate .claude/cq.md context file
-    CQ_PROJECT_ROOT="$project_dir" _generate_cq_md >/dev/null 2>&1 || true
-
-    # Output with discovery context
-    local _agents_found _workflows_found _stacks_found
-    _agents_found=$(jq '.agents // [] | length' "${project_dir}/.claudekiq/settings.json" 2>/dev/null || echo "0")
-    _workflows_found=$(find "${project_dir}/.claudekiq/workflows" -maxdepth 1 -name '*.yml' -o -name '*.yaml' 2>/dev/null | wc -l | tr -d ' ')
-    _stacks_found=$(jq '.stacks // [] | length' "${project_dir}/.claudekiq/settings.json" 2>/dev/null || echo "0")
-
-    cq_json_out --arg dir "$project_dir" --argjson agents "$_agents_found" --argjson workflows "$_workflows_found" --argjson stacks "$_stacks_found" \
-      '{status:"exists", directory:$dir, agents_found:$agents, workflows_found:$workflows, stacks_found:$stacks}' || {
-      cq_info "Already initialized in ${project_dir}"
-      _init_discovery_hints "$_agents_found" "$_workflows_found" "$_stacks_found"
-    }
-    return 0
+    {
+      $needs_private && echo '.claudekiq/workflows/private/'
+      $needs_runs && echo '.claudekiq/runs/'
+    } >> "$gitignore"
   fi
 
-  mkdir -p "${project_dir}/.claudekiq/workflows/private"
-  mkdir -p "${project_dir}/.claudekiq/runs"
-
-  # Create default settings.json
-  echo '{}' > "${project_dir}/.claudekiq/settings.json"
-
-  # Append to .gitignore
-  local gitignore="${project_dir}/.gitignore"
-  local needs_private=true
-  local needs_runs=true
-  if [[ -f "$gitignore" ]]; then
-    grep -qF '.claudekiq/workflows/private/' "$gitignore" && needs_private=false
-    grep -qF '.claudekiq/runs/' "$gitignore" && needs_runs=false
-  fi
-  {
-    $needs_private && echo '.claudekiq/workflows/private/'
-    $needs_runs && echo '.claudekiq/runs/'
-  } >> "$gitignore"
-
-  # Install .claude-plugin/plugin.json (points to ~/.cq/skills/)
+  # Common post-init: plugin, MCP, scan, hooks, cq.md
   _install_plugin_json "$project_dir"
 
-  # Install MCP config only if explicitly requested
   if $install_mcp; then
     _install_mcp_config "$project_dir"
   fi
 
-  # Auto-scan for agents and skills
   CQ_PROJECT_ROOT="$project_dir" cmd_scan >/dev/null 2>&1 || true
-
-  # Auto-install hooks
   CQ_PROJECT_ROOT="$project_dir" _hooks_install >/dev/null 2>&1 || true
-
-  # Generate .claude/cq.md context file
   CQ_PROJECT_ROOT="$project_dir" _generate_cq_md >/dev/null 2>&1 || true
 
   # Output with discovery context
@@ -93,11 +60,16 @@ cmd_init() {
   _workflows_found=$(find "${project_dir}/.claudekiq/workflows" -maxdepth 1 -name '*.yml' -o -name '*.yaml' 2>/dev/null | wc -l | tr -d ' ')
   _stacks_found=$(jq '.stacks // [] | length' "${project_dir}/.claudekiq/settings.json" 2>/dev/null || echo "0")
 
-  cq_json_out --arg dir "$project_dir" --argjson agents "$_agents_found" --argjson workflows "$_workflows_found" --argjson stacks "$_stacks_found" \
-    '{status:"initialized", directory:$dir, agents_found:$agents, workflows_found:$workflows, stacks_found:$stacks}' || {
-    cq_info "Initialized .claudekiq/ in ${project_dir}"
+  cq_json_out --arg dir "$project_dir" --arg status "$init_status" --argjson agents "$_agents_found" --argjson workflows "$_workflows_found" --argjson stacks "$_stacks_found" \
+    '{status:$status, directory:$dir, agents_found:$agents, workflows_found:$workflows, stacks_found:$stacks}' || {
+    if [[ "$init_status" == "exists" ]]; then
+      cq_info "Already initialized in ${project_dir}"
+    else
+      cq_info "Initialized .claudekiq/ in ${project_dir}"
+    fi
     _init_discovery_hints "$_agents_found" "$_workflows_found" "$_stacks_found"
   }
+  return 0
 }
 
 _init_discovery_hints() {

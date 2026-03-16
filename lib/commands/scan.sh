@@ -83,11 +83,7 @@ _scan_agents() {
     done
   fi
 
-  if [[ ${#items[@]} -gt 0 ]]; then
-    printf '%s\n' "${items[@]}" | jq -s '.'
-  else
-    echo '[]'
-  fi
+  cq_items_to_json "${items[@]+"${items[@]}"}"
 }
 
 _scan_skills() {
@@ -118,11 +114,7 @@ _scan_skills() {
     done
   fi
 
-  if [[ ${#items[@]} -gt 0 ]]; then
-    printf '%s\n' "${items[@]}" | jq -s '.'
-  else
-    echo '[]'
-  fi
+  cq_items_to_json "${items[@]+"${items[@]}"}"
 }
 
 _scan_plugin_skills() {
@@ -169,11 +161,7 @@ _scan_plugin_skills() {
     done <<< "$skill_paths"
   fi
 
-  if [[ ${#items[@]} -gt 0 ]]; then
-    printf '%s\n' "${items[@]}" | jq -s '.'
-  else
-    echo '[]'
-  fi
+  cq_items_to_json "${items[@]+"${items[@]}"}"
 }
 
 # Detect all stacks in the project. Returns a JSON array of stack objects.
@@ -186,13 +174,15 @@ _scan_stacks() {
   if [[ -f "$root/package.json" ]]; then
     local language="javascript"
     local framework="" test_command="" build_command="" lint_command=""
+    local pkg_json
+    pkg_json=$(cat "$root/package.json" 2>/dev/null)
 
     if [[ -f "$root/tsconfig.json" ]]; then
       language="typescript"
     fi
     # Detect framework from dependencies
     local deps
-    deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys[]' "$root/package.json" 2>/dev/null || true)
+    deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys[]' <<< "$pkg_json" 2>/dev/null || true)
     if echo "$deps" | grep -q '^next$'; then
       framework="next"
     elif echo "$deps" | grep -q '^react$'; then
@@ -209,13 +199,11 @@ _scan_stacks() {
       framework="preact"
     fi
     # Detect commands from package.json scripts
-    local scripts
-    scripts=$(jq -r '.scripts // {} | keys[]' "$root/package.json" 2>/dev/null || true)
+    local scripts test_script
+    scripts=$(jq -r '.scripts // {} | keys[]' <<< "$pkg_json" 2>/dev/null || true)
     if echo "$scripts" | grep -q '^test$'; then
-      test_command=$(jq -r '.scripts.test' "$root/package.json" 2>/dev/null)
-      if [[ "$test_command" == *"no test specified"* ]]; then
-        test_command=""
-      else
+      test_script=$(jq -r '.scripts.test' <<< "$pkg_json" 2>/dev/null)
+      if [[ "$test_script" != *"no test specified"* ]]; then
         test_command="npm test"
       fi
     fi
@@ -350,11 +338,7 @@ _scan_stacks() {
     items=("${supplemented[@]}")
   fi
 
-  if [[ ${#items[@]} -gt 0 ]]; then
-    printf '%s\n' "${items[@]}" | jq -s '.'
-  else
-    echo '[]'
-  fi
+  cq_items_to_json "${items[@]+"${items[@]}"}"
 }
 
 # Helper: build a stack JSON object, omitting empty fields
@@ -418,11 +402,7 @@ _scan_commands() {
     done
   fi
 
-  if [[ ${#items[@]} -gt 0 ]]; then
-    printf '%s\n' "${items[@]}" | jq -s '.'
-  else
-    echo '[]'
-  fi
+  cq_items_to_json "${items[@]+"${items[@]}"}"
 }
 
 _scan_validate_workflows() {

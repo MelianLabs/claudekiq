@@ -193,10 +193,10 @@ cmd__pre_commit_validate() {
     exit 0
   fi
 
-  local safety
-  safety=$(jq -r '.safety // "strict"' "${CQ_PROJECT_ROOT}/.claudekiq/settings.json" 2>/dev/null || echo "strict")
+  local policy
+  policy=$(cq_safety_policy "git_commit")
 
-  if [[ "$safety" == "relaxed" ]]; then
+  if [[ "$policy" == "warn" ]]; then
     echo "Warning: git commit during step '${current_step}' (allows_commit not set)" >&2
     exit 0
   else

@@ -40,11 +40,7 @@ cmd_workflows_list() {
   done <<< "$workflows"
 
   local result_json
-  if [[ ${#wf_items[@]} -gt 0 ]]; then
-    result_json=$(printf '%s\n' "${wf_items[@]}" | jq -s '.')
-  else
-    result_json="[]"
-  fi
+  result_json=$(cq_items_to_json "${wf_items[@]+"${wf_items[@]}"}")
 
   if [[ "$CQ_JSON" == "true" ]]; then
     jq '.' <<< "$result_json"
@@ -149,18 +145,15 @@ cmd_workflows_validate() {
   done <<< "$model_errors"
 
   # Check step types against known types + plugins
-  local type_warnings
-  type_warnings=$(jq -r '.steps[].type // empty' <<< "$wf_json" | sort -u | while IFS= read -r stype; do
+  local stype
+  while IFS= read -r stype; do
     [[ -z "$stype" ]] && continue
     local kind
     kind=$(cq_resolve_step_type "$stype")
     if [[ "$kind" == "convention" ]]; then
-      echo "INFO: Step type '${stype}' will be treated as convention-based agent step" >&2
+      cq_info "INFO: Step type '${stype}' will be treated as convention-based agent step"
     fi
-  done)
-  while IFS= read -r warn; do
-    [[ -n "$warn" ]] && errors+=("$warn")
-  done <<< "$type_warnings"
+  done <<< "$(jq -r '.steps[].type // empty' <<< "$wf_json" | sort -u)"
 
   # Validate parallel steps have branches array
   local parallel_errors
@@ -264,41 +257,31 @@ cmd_workflows_validate() {
     done
   fi
 
-  # Validate override IDs exist in base workflow
-  local override_keys
-  override_keys=$(jq -r '.override // {} | keys[]' <<< "$wf_json" 2>/dev/null)
-  if [[ -n "$override_keys" && -n "$extends_name" ]]; then
-    local base_file base_json base_step_ids
-    base_file=$(cq_find_workflow "$extends_name" 2>/dev/null)
-    if [[ -n "$base_file" ]]; then
-      base_json=$(cq_yaml_to_json "$base_file" 2>/dev/null)
-      if [[ -n "$base_json" ]]; then
-        base_step_ids=$(jq -r '.steps[].id' <<< "$base_json" 2>/dev/null)
+  # Validate override and remove IDs exist in base workflow
+  if [[ -n "$extends_name" ]]; then
+    local base_file_v base_json_v base_step_ids_v
+    base_file_v=$(cq_find_workflow "$extends_name" 2>/dev/null) || true
+    if [[ -n "$base_file_v" ]]; then
+      base_json_v=$(cq_yaml_to_json "$base_file_v" 2>/dev/null)
+      if [[ -n "$base_json_v" ]]; then
+        base_step_ids_v=$(jq -r '.steps[].id' <<< "$base_json_v" 2>/dev/null)
+
+        local override_keys
+        override_keys=$(jq -r '.override // {} | keys[]' <<< "$wf_json" 2>/dev/null)
         local ok
         while IFS= read -r ok; do
           [[ -z "$ok" ]] && continue
-          if ! echo "$base_step_ids" | grep -qx "$ok"; then
+          if ! echo "$base_step_ids_v" | grep -qx "$ok"; then
             cq_warn "Override step '${ok}' not found in base workflow '${extends_name}'"
           fi
         done <<< "$override_keys"
-      fi
-    fi
-  fi
 
-  # Validate remove IDs exist in base workflow
-  local remove_ids
-  remove_ids=$(jq -r '.remove // [] | .[]' <<< "$wf_json" 2>/dev/null)
-  if [[ -n "$remove_ids" && -n "$extends_name" ]]; then
-    local base_file base_json base_step_ids
-    base_file=$(cq_find_workflow "$extends_name" 2>/dev/null)
-    if [[ -n "$base_file" ]]; then
-      base_json=$(cq_yaml_to_json "$base_file" 2>/dev/null)
-      if [[ -n "$base_json" ]]; then
-        base_step_ids=$(jq -r '.steps[].id' <<< "$base_json" 2>/dev/null)
+        local remove_ids
+        remove_ids=$(jq -r '.remove // [] | .[]' <<< "$wf_json" 2>/dev/null)
         local ri
         while IFS= read -r ri; do
           [[ -z "$ri" ]] && continue
-          if ! echo "$base_step_ids" | grep -qx "$ri"; then
+          if ! echo "$base_step_ids_v" | grep -qx "$ri"; then
             cq_warn "Remove step '${ri}' not found in base workflow '${extends_name}'"
           fi
         done <<< "$remove_ids"

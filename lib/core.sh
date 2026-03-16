@@ -39,6 +39,19 @@ cq_trim() {
   echo "$var"
 }
 
+# --- Array helper ---
+
+# Convert a bash array of JSON objects into a JSON array.
+# Usage: local -a items=(...); cq_items_to_json "${items[@]}"
+# Returns "[]" if no arguments passed.
+cq_items_to_json() {
+  if [[ $# -gt 0 ]]; then
+    printf '%s\n' "$@" | jq -s '.'
+  else
+    echo '[]'
+  fi
+}
+
 # --- ID and time ---
 
 cq_gen_id() {
@@ -409,19 +422,15 @@ cq_fire_hook() {
   local run_id
   run_id=$(basename "$run_dir")
 
-  local current_step=""
+  local current_step="" template="" run_status=""
   if [[ -f "${run_dir}/meta.json" ]]; then
-    current_step=$(jq -r '.current_step // ""' "${run_dir}/meta.json")
-  fi
-
-  local template=""
-  if [[ -f "${run_dir}/meta.json" ]]; then
-    template=$(jq -r '.template // ""' "${run_dir}/meta.json")
-  fi
-
-  local run_status=""
-  if [[ -f "${run_dir}/meta.json" ]]; then
-    run_status=$(jq -r '.status // ""' "${run_dir}/meta.json")
+    local _meta
+    _meta=$(cat "${run_dir}/meta.json" 2>/dev/null)
+    if [[ -n "$_meta" ]]; then
+      current_step=$(jq -r '.current_step // ""' <<< "$_meta")
+      template=$(jq -r '.template // ""' <<< "$_meta")
+      run_status=$(jq -r '.status // ""' <<< "$_meta")
+    fi
   fi
 
   # Emit structured JSON event to stderr for Claude Code hooks to parse
