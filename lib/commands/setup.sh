@@ -34,15 +34,18 @@ cmd_init() {
     local needs_private=true
     local needs_runs=true
     local needs_active_runs=true
+    local needs_commands=true
     if [[ -f "$gitignore" ]]; then
       grep -qF '.claudekiq/workflows/private/' "$gitignore" && needs_private=false
       grep -qF '.claudekiq/runs/' "$gitignore" && needs_runs=false
       grep -qF '.claudekiq/.active_runs' "$gitignore" && needs_active_runs=false
+      grep -qF '.claude/commands/cq*.md' "$gitignore" && needs_commands=false
     fi
     {
       $needs_private && echo '.claudekiq/workflows/private/'
       $needs_runs && echo '.claudekiq/runs/'
       $needs_active_runs && echo '.claudekiq/.active_runs'
+      $needs_commands && echo '.claude/commands/cq*.md'
     } >> "$gitignore"
   fi
 
@@ -106,13 +109,13 @@ _install_commands() {
   local commands_dir="${project_dir}/.claude/commands"
   mkdir -p "$commands_dir"
 
-  # Copy skill definitions as Claude Code custom commands
+  # Symlink skill definitions as Claude Code custom commands
   local skill_name
   for skill_name in cq cq-runner cq-approve cq-worker cq-setup; do
     local src="${cq_home}/skills/${skill_name}/SKILL.md"
     local dest="${commands_dir}/${skill_name}.md"
     if [[ -f "$src" ]]; then
-      cp "$src" "$dest"
+      ln -sf "$src" "$dest"
     fi
   done
 }

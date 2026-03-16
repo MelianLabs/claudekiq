@@ -1,2 +1,3 @@
 .claudekiq/workflows/private/
 .claudekiq/runs/
+.claude/commands/cq*.md
