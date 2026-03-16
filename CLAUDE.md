@@ -40,7 +40,7 @@ Command dispatch is a case statement in `cq` that maps command names to `cmd_*` 
 - `/cq-worker` — Internal: agent step execution (called by `/cq-runner`)
 - `/cq-setup` — Internal: project discovery and workflow creation (called by `/cq setup`)
 
-Only `/cq` is listed in `.claude-plugin/plugin.json`. Internal skills are invoked programmatically via `Skill()`.
+Skills are registered as `.claude/commands/` symlinks pointing to `~/.cq/skills/`. Internal skills are invoked programmatically via `Skill()`.
 
 ### Command Modules (`lib/commands/`)
 
@@ -85,12 +85,13 @@ Active runs index: `.claudekiq/.active_runs` — lightweight file listing active
 
 `cq init` creates `.claudekiq/` structure, installs hooks, scans project, and outputs context-aware discovery hints:
 - `.claudekiq/` directory structure (workflows, runs, settings.json)
-- `.claude-plugin/plugin.json` listing only `/cq` skill (version auto-synced from `$CQ_VERSION`, user-added skills preserved on re-init)
+- `.claude/commands/` — relative symlinks to `~/.cq/skills/` for Claude Code command discovery
+- `.claude-plugin/plugin.json` — plugin manifest with relative paths (version auto-synced from `$CQ_VERSION`)
 - `.gitignore` entries
 - Smart output: reports discovered agents, stacks, and available workflows
 - JSON output includes `agents_found`, `stacks_found`, `workflows_found` counts
 
-Hooks are auto-installed into `.claude/settings.json`. The `/cq` skill is served via the `.claude-plugin/plugin.json` plugin system from `~/.cq/skills/`.
+Hooks are auto-installed into `.claude/settings.json`.
 
 `/cq setup` is the user-facing command for project discovery and workflow creation.
 
@@ -229,6 +230,10 @@ Hints are suppressed in `--json` mode. Helper: `cq_hint()` in `lib/core.sh`.
 - **Gates**: Exact AskUserQuestion patterns with options for approve/reject/override
 - **Agent dispatch**: Exact Agent tool call with subagent_type, model, isolation parameters
 - **Error recovery**: Log errors to context, mark step failed, continue runner loop
+
+## Path Rules
+
+Never use hardcoded absolute home directory paths (e.g., `/Users/someone/.cq/`). When generating symlinks, config files, or plugin.json entries that reference `~/.cq/`, always use **relative paths**. Use `python3 -c "import os; print(os.path.relpath(target, start))"` to compute them.
 
 ## Git Safety
 

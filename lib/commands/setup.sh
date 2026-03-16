@@ -112,12 +112,16 @@ _install_commands() {
   local commands_dir="${project_dir}/.claude/commands"
   mkdir -p "$commands_dir"
 
-  # Symlink skill definitions as Claude Code custom commands
+  # Compute relative path from commands_dir to cq_home/skills/
+  local rel_path
+  rel_path=$(python3 -c "import os; print(os.path.relpath('${cq_home}/skills', '${commands_dir}'))")
+
+  # Symlink skill definitions as Claude Code custom commands (relative paths)
   local skill_name
   for skill_name in cq cq-runner cq-approve cq-worker cq-setup; do
-    local src="${cq_home}/skills/${skill_name}/SKILL.md"
+    local src="${rel_path}/${skill_name}/SKILL.md"
     local dest="${commands_dir}/${skill_name}.md"
-    if [[ -f "$src" ]]; then
+    if [[ -f "${cq_home}/skills/${skill_name}/SKILL.md" ]]; then
       ln -sf "$src" "$dest"
     fi
   done
@@ -138,11 +142,14 @@ _install_plugin_json() {
   fi
 
   # Build new plugin.json with CQ_VERSION and merge user skills
-  # Only /cq is user-facing; other skills are internal (invoked programmatically)
-  jq -cn --arg home "$cq_home" --arg ver "$CQ_VERSION" --argjson user_skills "$user_skills" '{
+  # Relative path from .claude-plugin/ to skills
+  local rel_skills
+  rel_skills=$(python3 -c "import os; print(os.path.relpath('${cq_home}/skills/cq', '${plugin_dir}'))")
+
+  jq -cn --arg skills "$rel_skills" --arg ver "$CQ_VERSION" --argjson user_skills "$user_skills" '{
     name:"claudekiq", version:$ver,
     description:"Filesystem-backed workflow engine for Claude Code",
-    skills:([($home+"/skills/cq")] + $user_skills)
+    skills:([($skills)] + $user_skills)
   }' > "${plugin_dir}/plugin.json"
 }
 
