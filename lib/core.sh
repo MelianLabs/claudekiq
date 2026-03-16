@@ -490,6 +490,7 @@ cq_safety_policy() {
 # --- Context builders ---
 
 # Default max_lines per builder type (can be overridden per-builder via max_lines field)
+_CQ_CB_DEFAULTS_DEFAULT=100
 _CQ_CB_DEFAULTS_git_diff=200
 _CQ_CB_DEFAULTS_error_context=100
 _CQ_CB_DEFAULTS_file_contents=100
@@ -513,19 +514,20 @@ cq_resolve_context_builders() {
   local count i builder_type
   count=$(jq 'length' <<< "$builders_json")
   for ((i=0; i<count; i++)); do
-    local builder
+    local builder builder_fields
     builder=$(jq --argjson i "$i" '.[$i]' <<< "$builders_json")
-    builder_type=$(jq -r '.type' <<< "$builder")
+    # Extract type and max_lines in a single jq call
+    builder_fields=$(jq -r '[.type, (.max_lines // "")] | @tsv' <<< "$builder")
+    builder_type="${builder_fields%%	*}"
+    local max_lines="${builder_fields#*	}"
 
     # Resolve max_lines: per-builder > global config > type default
-    local max_lines
-    max_lines=$(jq -r '.max_lines // empty' <<< "$builder")
     if [[ -z "$max_lines" ]]; then
       if [[ -n "$global_max_lines" ]]; then
         max_lines="$global_max_lines"
       else
         local default_var="_CQ_CB_DEFAULTS_${builder_type}"
-        max_lines="${!default_var:-100}"
+        max_lines="${!default_var:-${_CQ_CB_DEFAULTS_DEFAULT}}"
       fi
     fi
 

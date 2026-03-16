@@ -2,27 +2,50 @@
 # hooks_internal.sh — Internal hook handler commands (underscore-prefixed, not in help/schema)
 # These are called by Claude Code hooks and should be fast — early exit if no active run.
 
-# Find the most recent active run (running or gated) for hook context
+# Find the most recent active run (running or gated) for hook context.
+# Uses the .active_runs index for fast lookup, falls back to directory scan.
 _cq_active_run_for_hook() {
   local runs_dir="${CQ_PROJECT_ROOT}/.claudekiq/runs"
-  [[ -d "$runs_dir" ]] || return 1
-
   local newest_run="" newest_ts="0"
-  local d meta status updated_at
-  for d in "$runs_dir"/*/; do
-    [[ -f "${d}meta.json" ]] || continue
-    meta=$(cat "${d}meta.json" 2>/dev/null) || continue
-    status=$(jq -r '.status' <<< "$meta")
-    case "$status" in
-      running|gated)
-        updated_at=$(jq -r '.updated_at // "0"' <<< "$meta")
-        if [[ "$updated_at" > "$newest_ts" ]]; then
-          newest_ts="$updated_at"
-          newest_run=$(basename "$d")
-        fi
-        ;;
-    esac
-  done
+
+  # Fast path: use index (still validate status defensively against stale entries)
+  local index_file="${CQ_PROJECT_ROOT}/.claudekiq/.active_runs"
+  if [[ -s "$index_file" ]]; then
+    local run_id meta status updated_at
+    while IFS= read -r run_id; do
+      [[ -z "$run_id" ]] && continue
+      [[ -f "${runs_dir}/${run_id}/meta.json" ]] || continue
+      meta=$(cat "${runs_dir}/${run_id}/meta.json" 2>/dev/null) || continue
+      status=$(jq -r '.status' <<< "$meta")
+      case "$status" in
+        running|gated)
+          updated_at=$(jq -r '.updated_at // "0"' <<< "$meta")
+          if [[ "$updated_at" > "$newest_ts" ]]; then
+            newest_ts="$updated_at"
+            newest_run="$run_id"
+          fi
+          ;;
+      esac
+    done < "$index_file"
+  else
+    # Fallback: scan all runs
+    [[ -d "$runs_dir" ]] || return 1
+    local d meta status updated_at
+    for d in "$runs_dir"/*/; do
+      [[ -f "${d}meta.json" ]] || continue
+      meta=$(cat "${d}meta.json" 2>/dev/null) || continue
+      status=$(jq -r '.status' <<< "$meta")
+      case "$status" in
+        running|gated)
+          updated_at=$(jq -r '.updated_at // "0"' <<< "$meta")
+          if [[ "$updated_at" > "$newest_ts" ]]; then
+            newest_ts="$updated_at"
+            newest_run=$(basename "$d")
+          fi
+          ;;
+      esac
+    done
+  fi
 
   [[ -n "$newest_run" ]] && { echo "$newest_run"; return 0; }
   return 1
@@ -61,11 +84,17 @@ cmd__stage_context() {
     hook_file=$(echo "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null || true)
   fi
 
-  # Get git diff summary (fast: --stat --name-only)
+  # Get git diff info in a single call (--stat includes file names + summary line)
   local diff_files="" diff_summary=""
   if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    diff_files=$(git diff --name-only HEAD 2>/dev/null | head -100 || true)
-    diff_summary=$(git diff --stat HEAD 2>/dev/null | tail -1 || true)
+    local diff_stat
+    diff_stat=$(git diff --stat HEAD 2>/dev/null || true)
+    if [[ -n "$diff_stat" ]]; then
+      diff_summary=$(tail -1 <<< "$diff_stat")
+      # Extract file names from stat lines (everything before the | delimiter)
+      # Skip the last line (summary) by filtering out lines without |
+      diff_files=$(grep '|' <<< "$diff_stat" | sed 's/ *|.*//; s/^ *//' | head -100)
+    fi
   fi
 
   # Build modified files list (combine hook file + git diff)
