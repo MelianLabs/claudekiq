@@ -50,9 +50,11 @@ You are a cq worker agent processing job "JOB_ID: DESCRIPTION".
 
 ## Setup
 1. Run: cq init
-2. Start the workflow:
+2. Symlink runs directory back to the main repo so `cq status` works from the parent:
+   rm -rf .claudekiq/runs && ln -s $PARENT_ROOT/.claudekiq/runs .claudekiq/runs
+3. Start the workflow:
    cq start <workflow> --json <all job fields as --key=val flags>
-3. Extract run_id from the JSON output
+4. Extract run_id from the JSON output
 
 ## Runner Loop
 Execute each step of the cq workflow:
@@ -95,6 +97,8 @@ When workflow finishes (completed or failed):
 1. Write final status:
    {"status":"completed|failed","run_id":"<run_id>","summary":"<brief summary>","branch":"<current git branch>"}
 2. If changes were made, commit them: git add -A && git commit -m "<message>"
+3. Clean up the worktree after pushing (if applicable):
+   cd $PARENT_ROOT && git worktree remove --force <worktree_path>
 
 ## Rules
 - Stay in your worktree. Only write outside it to the status file path above.
@@ -108,9 +112,9 @@ When workflow finishes (completed or failed):
 After spawning all workers, loop until all jobs reach a terminal state:
 
 ### Step 1: Read Status
-```bash
-cq workers status <session_id> --json
-```
+Read all `*.status.json` files from `$CQ_PROJECT_ROOT/.claudekiq/workers/<session_id>/`.
+Also run `cq list --json` and `cq status <run_id> --json` for each known run_id (these now work from the main repo thanks to the symlinked runs directory).
+Additionally, check each worktree's git state with `git -C <worktree_path> diff --stat HEAD` and `git -C <worktree_path> log --oneline -3` to see actual code changes.
 
 ### Step 2: Display Dashboard
 ```
@@ -173,9 +177,22 @@ Results:
   ❌ [JOB-3] description — failed at step: run-tests
 ```
 
+## Worktree Cleanup
+After all workers finish (or when a worker completes), clean up any remaining worktrees:
+```bash
+# Remove completed worktrees
+git worktree list | grep '\.claude/worktrees/agent-' | awk '{print $1}' | while read wt; do
+  git worktree remove --force "$wt" 2>/dev/null
+done
+# Prune stale worktree references
+git worktree prune
+```
+Run this in the Final Summary step after displaying results.
+
 ## Important Rules
 - Always use `--json` flag when reading cq state
 - Each worker runs in its own git worktree — no conflicts between workers
 - The shared coordination directory is at $CQ_PROJECT_ROOT/.claudekiq/workers/<session_id>/
 - Workers communicate ONLY through status/answer files — no direct messaging
 - If a worker agent finishes (background notification), re-read status to update dashboard
+- Always clean up worktrees when workers finish to avoid stale worktree accumulation
