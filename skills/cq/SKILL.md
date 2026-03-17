@@ -34,9 +34,23 @@ This mode shows a live dashboard of all running, pending, and gated jobs with au
 
 ### How it works
 
-1. Run: `cq list --json` to get all active runs
+1. Run: `cq list --json` to get all active runs from the main repo
 2. Run: `cq todos --json` to get all pending TODOs across runs
-3. Display a formatted dashboard:
+3. **Scan worktrees for additional runs** that may not appear in the main repo's cq state:
+   ```bash
+   # Find all active worktrees
+   git worktree list | grep '\.claude/worktrees/agent-'
+   ```
+   For each worktree found:
+   - Check for cq runs inside: `ls <worktree>/.claudekiq/runs/*/state.json 2>/dev/null`
+   - For each run found, read its state to get status, current step, template, and context
+   - Check git state: `git -C <worktree> branch --show-current` and `git -C <worktree> diff --stat HEAD`
+4. **Scan worker status files** from all sessions:
+   ```bash
+   cat .claudekiq/workers/*/*.status.json 2>/dev/null
+   ```
+5. **Merge all sources** — deduplicate by run_id, prefer the most detailed source
+6. Display a formatted dashboard:
 
 ```
 📋 Claudekiq Jobs Dashboard
@@ -57,16 +71,27 @@ This mode shows a live dashboard of all running, pending, and gated jobs with au
 
 📝 Pending TODOs (1)
   └─ #1 [ghi11111] release/push-to-origin — approve push to origin/main
+
+🏭 Worktree Workers (3)
+  ├─ [agent-abc123] fix/issue-59 — 2 files changed, step: fix 🔄
+  ├─ [agent-def456] feature/issue-55 — 4 files changed, step: backend 🔄
+  └─ [agent-ghi789] feature/issue-53 — no changes yet, step: plan 🔄
 ```
 
-4. For each run, show:
+7. For each run, show:
    - Run ID (short)
    - Workflow name
    - Description from context (if available)
    - Current step and position (e.g., "Step 3/6")
    - Status marker
    - For gated runs: what TODO is pending
-5. After displaying, ask the user:
+8. For each worktree worker, show:
+   - Agent ID (short)
+   - Branch name
+   - Number of changed files (`git diff --stat HEAD`)
+   - Current step (from state.json or status file)
+   - Status marker
+9. After displaying, ask the user:
    - **"Auto-refresh every 10s? (y/n)"** — if yes, use the `/loop` skill: `/loop 10s /cq status`
    - **"Resume a run?"** — if yes, get the run_id and jump to the **Runner Loop**
    - **"Resolve a TODO?"** — if yes, show TODO details and handle approve/reject
