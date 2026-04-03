@@ -1133,6 +1133,32 @@ cmd_step_done() {
     "$(jq -cn --arg step "$step_id" --arg result "$outcome" --argjson visits "$visits" \
       '{step:$step, result:$result, visits:$visits}')"
 
+  # Fire on_step_done hook with step context
+  local step_name_for_hook
+  step_name_for_hook=$(cq_get_step "$run_id" "$step_id" | jq -r '.name // .id')
+
+  # Temporarily enrich ctx with step info for hook interpolation
+  local ctx_file="${run_dir}/ctx.json"
+  if [[ -f "$ctx_file" ]]; then
+    local original_ctx enriched_ctx
+    original_ctx=$(cat "$ctx_file")
+    enriched_ctx=$(echo "$original_ctx" | jq \
+      --arg step_id "$step_id" \
+      --arg step_name "$step_name_for_hook" \
+      --arg step_outcome "$outcome" \
+      --argjson step_visits "$visits" \
+      '. + {step_id: $step_id, step_name: $step_name, step_outcome: $step_outcome, step_visits: $step_visits}')
+    echo "$enriched_ctx" > "$ctx_file"
+    cq_fire_hook "on_step_done" "$run_dir"
+    # Restore original ctx (don't pollute it with transient step info)
+    echo "$original_ctx" > "$ctx_file"
+  else
+    cq_fire_hook "on_step_done" "$run_dir"
+  fi
+
+  # Fire tracker comment for step completion
+  cq_fire_tracker "step_done" "$run_id" "$step_id" "$step_name_for_hook" "$outcome" "$visits"
+
   # Extract outputs if step defines them
   _extract_outputs "$run_id" "$step_id" "$result_json"
 
@@ -1230,6 +1256,7 @@ _handle_gate() {
             cq_log_event "$run_dir" "run_failed" \
               "$(jq -cn --arg step "$step_id" '{step:$step, reason:"max_visits_exceeded_headless"}')"
             cq_fire_hook "on_fail" "$run_dir"
+            cq_fire_tracker "fail" "$run_id" "$step_id" "max_visits exceeded (headless)"
           else
             # Create TODO for override
             local desc
@@ -1271,6 +1298,7 @@ _advance_run() {
     cq_update_meta "$run_id" '.status = "completed" | .current_step = null'
     cq_log_event "$run_dir" "run_completed" '{}'
     cq_fire_hook "on_complete" "$run_dir"
+    cq_fire_tracker "complete" "$run_id"
     cq_info "$(cq_marker "passed") Workflow completed (run ${run_id})"
   else
     # Advance to next step
@@ -1550,6 +1578,7 @@ cmd_todo() {
       cq_log_event "$run_dir" "todo_rejected" \
         "$(jq -cn --arg tid "$todo_id" --arg sid "$step_id" '{todo_id:$tid, step_id:$sid}')"
       cq_fire_hook "on_fail" "$run_dir"
+      cq_fire_tracker "fail" "$run_id" "$step_id" "rejected by human"
       cq_info "$(cq_marker "failed") Action #${index} rejected — run ${run_id} failed"
       ;;
 

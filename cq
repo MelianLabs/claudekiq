@@ -29,6 +29,7 @@ _source_lib() {
 _source_lib "core.sh"
 _source_lib "yaml.sh"
 _source_lib "storage.sh"
+_source_lib "tracker.sh"
 _source_lib "commands.sh"
 _source_lib "schema.sh"
 

@@ -141,8 +141,10 @@ cq_default_config() {
     "on_gate": null,
     "on_fail": null,
     "on_complete": null,
-    "on_start": null
+    "on_start": null,
+    "on_step_done": null
   },
+  "tracker": null,
   "min_cq_version": null
 }
 DEFAULTS

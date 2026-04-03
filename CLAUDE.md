@@ -13,6 +13,7 @@ Claudekiq (`cq`) is a filesystem-backed workflow engine CLI for Claude Code. It 
 - `lib/storage.sh` — Filesystem I/O for runs, steps, state, context, todos, routing
 - `lib/commands.sh` — All command implementations
 - `lib/schema.sh` — AI-discoverable JSON schemas for every command
+- `lib/tracker.sh` — Issue tracker commenting (github, litetracker, custom)
 - `lib/yaml.sh` — YAML-to-JSON conversion via yq
 - `install.sh` — Installer script (local or remote)
 - `technical_details.md` — Full technical design document
@@ -20,7 +21,7 @@ Claudekiq (`cq`) is a filesystem-backed workflow engine CLI for Claude Code. It 
 ## Running Tests
 
 ```bash
-bats tests/               # Run all tests (111 tests)
+bats tests/               # Run all tests (178 tests)
 bats tests/test_e2e.bats  # Run only end-to-end tests
 bats tests/test_start.bats --filter "pattern"  # Filter by name
 ```

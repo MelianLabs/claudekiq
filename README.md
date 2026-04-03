@@ -476,7 +476,163 @@ Project settings override global. You can set:
 - `default_priority` — for new runs (urgent, high, normal, low)
 - `ttl` — seconds before old runs are cleaned up
 - `min_cq_version` — warn if installed cq is too old
-- `notifications` — hook commands for events (on_gate, on_fail, on_complete, on_start)
+- `notifications` — hook commands for events (on_gate, on_fail, on_complete, on_start, on_step_done)
+- `tracker` — automatic issue tracker commenting (see below)
+
+## Issue Tracker Integration
+
+cq can automatically post comments to your issue tracker when workflow events occur — step completions, workflow success, and failures. This turns every GitHub Issue or Linear story into a live progress log of the workflow.
+
+### Configuration
+
+Add a `tracker` block to your workflow YAML or to `.claudekiq/settings.json` (applies to all workflows):
+
+**Workflow-level** (`.claudekiq/workflows/feature.yml`):
+
+```yaml
+name: feature
+description: Implement a feature from issue to PR
+
+defaults:
+  issue_number: ""
+
+tracker:
+  type: github
+  repo: MelianLabs/claudekiq
+  issue: "{{issue_number}}"
+
+steps:
+  - id: implement
+    name: Implement Feature
+    type: agent
+    target: "@dev"
+    args_template: "Implement the feature described in issue #{{issue_number}}"
+    gate: human
+
+  - id: test
+    name: Run Tests
+    type: bash
+    target: "bats tests/"
+    gate: auto
+```
+
+**Settings-level** (`.claudekiq/settings.json`):
+
+```json
+{
+  "tracker": {
+    "type": "github",
+    "repo": "MelianLabs/claudekiq",
+    "issue": "{{issue_number}}"
+  }
+}
+```
+
+### Supported Trackers
+
+| Type | Config Fields | Requirements |
+|------|--------------|--------------|
+| `github` | `repo`, `issue` (template) | `gh` CLI authenticated |
+| `litetracker` | `project` (template), `story` (template) | [`lt` CLI](https://github.com/MelianLabs/litetracker-cli) authenticated |
+| `custom` | `command` (shell template with `{{tracker_body}}`) | Any |
+
+**GitHub example:**
+
+```yaml
+tracker:
+  type: github
+  repo: MelianLabs/claudekiq
+  issue: "{{issue_number}}"
+```
+
+**LiteTracker example:**
+
+```yaml
+tracker:
+  type: litetracker
+  project: "{{project_id}}"
+  story: "{{story_id}}"
+```
+
+Uses the [`lt` CLI](https://github.com/MelianLabs/litetracker-cli) to post comments via `lt story comment <project_id> <story_id> --text "..."`. Install with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MelianLabs/litetracker-cli/main/install.sh | bash
+```
+
+Then authenticate with `lt auth`.
+
+**Custom example** (e.g., posting to Slack, writing to a file, calling any API):
+
+```yaml
+tracker:
+  type: custom
+  command: "curl -X POST https://hooks.slack.com/... -d '{\"text\": \"{{tracker_body}}\"}'"
+```
+
+### Event Filtering
+
+By default, all events fire comments. Restrict with the `events` field:
+
+```yaml
+tracker:
+  type: github
+  repo: MelianLabs/claudekiq
+  issue: "{{issue_number}}"
+  events:
+    - step_done    # comment after each step completes
+    - complete     # comment when workflow finishes
+    - fail         # comment when workflow fails
+```
+
+### Per-Step Opt-Out
+
+Suppress tracker comments for trivial steps by adding `tracker: false`:
+
+```yaml
+steps:
+  - id: read-issue
+    name: Read Issue
+    type: bash
+    target: "gh issue view {{issue_number}}"
+    tracker: false    # don't post a comment for this trivial step
+    gate: auto
+
+  - id: implement
+    name: Implement Feature
+    type: agent
+    target: "@dev"
+    gate: human
+    # This step WILL post a tracker comment (default)
+```
+
+### Comment Format
+
+**Step completed:**
+
+> ✅ **Implement Feature** — pass (visit #1)
+> Workflow: `feature` · Run: `abc123` · Step: `implement`
+
+**Workflow completed:**
+
+> ✅ **Workflow completed**
+> Workflow: `feature` · Run: `abc123`
+>
+> ✅ `implement`  ✅ `test`  ✅ `review`
+
+**Workflow failed:**
+
+> ❌ **Workflow failed** at step `test`
+> Workflow: `feature` · Run: `abc123`
+> Reason: max_visits exceeded (headless)
+
+### Why This Is Useful
+
+- **Crash recovery visibility** — if a worker crashes mid-workflow, the issue shows exactly which steps completed
+- **Live progress log** — the issue becomes a timeline of the workflow's execution
+- **Email notifications** — if you watch the repo, GitHub sends you an email for each step
+- **Agent context** — any agent can read the issue comments to understand where things stand
+- **Works with `/cq-workers`** — each parallel worker posts to its own issue, giving you per-job visibility
 
 ## Project Structure
 
@@ -597,7 +753,7 @@ Workers: 3 spawned, 2 running, 1 gated, 0 done
 ## Running Tests
 
 ```bash
-bats tests/                              # All tests (170 tests)
+bats tests/                              # All tests (178 tests)
 bats tests/test_e2e.bats                 # End-to-end tests
 bats tests/test_start.bats --filter "pattern"  # Filter by name
 ```

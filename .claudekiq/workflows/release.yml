@@ -2,7 +2,23 @@ name: release
 description: Cut a new cq release
 default_priority: urgent
 
+defaults:
+  issue_number: ""
+
+tracker:
+  type: github
+  repo: MelianLabs/claudekiq
+  issue: "{{issue_number}}"
+
 steps:
+  - id: create-issue
+    name: Create Release Issue
+    type: bash
+    target: "num=$(gh issue create --repo MelianLabs/claudekiq --title 'Release v{{new_version}}' --body 'Tracking release v{{new_version}}' --label release 2>/dev/null | grep -oP '\\d+$') && echo \"{\\\"issue_number\\\": \\\"$num\\\"}\""
+    tracker: false
+    gate: auto
+    outputs: [issue_number]
+
   - id: check-tests
     name: Run Full Test Suite
     type: bash
