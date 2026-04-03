@@ -49,7 +49,7 @@ teardown() {
 
   # step-a and step-b should be tracked, step-no-track should not
   local step_done_count
-  step_done_count=$(grep -c "visit #" "$TRACKER_LOG" || true)
+  step_done_count=$(grep -c "^.* \*\*Step" "$TRACKER_LOG" || true)
   [ "$step_done_count" -eq 2 ]
 }
 
@@ -119,7 +119,7 @@ YAML
 
   # Should have completion comment but NOT step_done comment
   grep -q "Workflow completed" "$TRACKER_LOG"
-  ! grep -q "visit #" "$TRACKER_LOG"
+  ! grep -q "^\*\*Only Step\*\*" "$TRACKER_LOG"
 }
 
 @test "tracker: settings-level tracker config works" {

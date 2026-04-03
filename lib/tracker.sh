@@ -107,8 +107,13 @@ _tracker_step_done_body() {
   local template
   template=$(jq -r '.template // ""' "$(cq_run_dir "$run_id")/meta.json")
 
+  local visit_info=""
+  if [[ "$visits" -gt 1 ]]; then
+    visit_info=" (retry no. ${visits})"
+  fi
+
   cat <<EOF
-${marker} **${step_name}** — ${outcome} (visit #${visits})
+${marker} **${step_name}** — ${outcome}${visit_info}
 > Workflow: \`${template}\` · Run: \`${run_id}\` · Step: \`${step_id}\`
 EOF
 }
