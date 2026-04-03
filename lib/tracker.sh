@@ -213,7 +213,7 @@ _tracker_post_github() {
     cmd="${cmd} --repo ${repo}"
   fi
 
-  (eval "$cmd" 2>/dev/null &)
+  eval "$cmd" >/dev/null 2>&1 || true
 }
 
 _tracker_post_litetracker() {
@@ -236,7 +236,7 @@ _tracker_post_litetracker() {
     return 0
   fi
 
-  (lt story comment "$project_id" "$story_id" --text "$body" 2>/dev/null &)
+  lt story comment "$project_id" "$story_id" --text "$body" >/dev/null 2>&1 || true
 }
 
 _tracker_post_custom() {
@@ -258,7 +258,7 @@ _tracker_post_custom() {
   local interpolated
   interpolated=$(cq_interpolate "$cmd_template" "$enriched_ctx")
 
-  (eval "$interpolated" 2>/dev/null &)
+  eval "$interpolated" >/dev/null 2>&1 || true
 }
 
 # --- Public API ---
