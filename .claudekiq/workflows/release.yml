@@ -13,8 +13,9 @@ tracker:
 steps:
   - id: create-issue
     name: Create Release Issue
-    type: bash
-    target: "url=$(gh issue create --repo MelianLabs/claudekiq --title 'Release v{{new_version}}' --body 'Tracking release v{{new_version}}') && num=$(echo \"$url\" | grep -oP '\\d+$') && echo \"{\\\"issue_number\\\": \\\"$num\\\"}\""
+    type: agent
+    target: "@release-tracker"
+    args_template: "Create a GitHub issue for tracking this release. Run: gh issue create --repo MelianLabs/claudekiq --title 'Release v{{new_version}}' --body 'Tracking release v{{new_version}}'. Extract the issue number from the URL output and return it as JSON: {\"issue_number\": \"<number>\"}. Pass that JSON as result_json when marking the step done."
     tracker: false
     gate: auto
     outputs: [issue_number]
