@@ -49,6 +49,7 @@ teardown() {
   "$CQ" init >/dev/null
   grep -qF '.claudekiq/workflows/private/' .gitignore
   grep -qF '.claudekiq/runs/' .gitignore
+  grep -qF '.claude/worktrees/' .gitignore
 }
 
 @test "init is idempotent" {

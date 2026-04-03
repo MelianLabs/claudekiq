@@ -13,10 +13,11 @@ cmd_init() {
     _install_skill "$project_dir"
     _install_workers_skill "$project_dir"
 
-    # Ensure .gitignore has workers entry (added in v2.0.0)
+    # Ensure .gitignore has entries added in later versions
     local gitignore="${project_dir}/.gitignore"
     if [[ -f "$gitignore" ]]; then
       grep -qF '.claudekiq/workers/' "$gitignore" || echo '.claudekiq/workers/' >> "$gitignore"
+      grep -qF '.claude/worktrees/' "$gitignore" || echo '.claude/worktrees/' >> "$gitignore"
     fi
 
     # Install MCP config (added in v2.1.0)
@@ -41,15 +42,18 @@ cmd_init() {
   local needs_private=true
   local needs_runs=true
   local needs_workers=true
+  local needs_worktrees=true
   if [[ -f "$gitignore" ]]; then
     grep -qF '.claudekiq/workflows/private/' "$gitignore" && needs_private=false
     grep -qF '.claudekiq/runs/' "$gitignore" && needs_runs=false
     grep -qF '.claudekiq/workers/' "$gitignore" && needs_workers=false
+    grep -qF '.claude/worktrees/' "$gitignore" && needs_worktrees=false
   fi
   {
     $needs_private && echo '.claudekiq/workflows/private/'
     $needs_runs && echo '.claudekiq/runs/'
     $needs_workers && echo '.claudekiq/workers/'
+    $needs_worktrees && echo '.claude/worktrees/'
   } >> "$gitignore"
 
   # Install Claude Code skills (/cq and /cq-workers)
