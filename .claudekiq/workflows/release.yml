@@ -14,7 +14,7 @@ steps:
   - id: create-issue
     name: Create Release Issue
     type: bash
-    target: "num=$(gh issue create --repo MelianLabs/claudekiq --title 'Release v{{new_version}}' --body 'Tracking release v{{new_version}}' --label release 2>/dev/null | grep -oP '\\d+$') && echo \"{\\\"issue_number\\\": \\\"$num\\\"}\""
+    target: "url=$(gh issue create --repo MelianLabs/claudekiq --title 'Release v{{new_version}}' --body 'Tracking release v{{new_version}}') && num=$(echo \"$url\" | grep -oP '\\d+$') && echo \"{\\\"issue_number\\\": \\\"$num\\\"}\""
     tracker: false
     gate: auto
     outputs: [issue_number]
